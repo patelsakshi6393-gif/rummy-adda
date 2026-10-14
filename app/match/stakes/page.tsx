@@ -24,7 +24,7 @@ function StakeSelectionContent() {
   const { wallet } = useAuth();
 
   const formatParam = (searchParams.get('format') || 'points') as GameMode;
-  const currentFormat: GameMode = ['points', 'pool101', 'deals'].includes(formatParam)
+  const currentFormat: GameMode = ['points', 'pool101', 'pool400', 'deals'].includes(formatParam)
     ? formatParam
     : 'points';
 
@@ -45,6 +45,11 @@ function StakeSelectionContent() {
       title: 'Pool 101 Rummy',
       desc: '101 points limit knockout pool match. Last standing player wins.',
       icon: '🏊',
+    },
+    pool400: {
+      title: 'Pool 400 Rummy',
+      desc: '400 points limit knockout pool match. Long play strategic championship.',
+      icon: '🏆',
     },
     deals: {
       title: 'Deals Rummy',

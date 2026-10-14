@@ -45,6 +45,11 @@ export const INITIAL_TABLES: Omit<TableConfig, 'currentPlayers' | 'status'>[] = 
   { tableId: 'pool_160_6p', name: 'Pool 101 - Bronze Royale', gameMode: 'pool101', pointValue: 2, entryFee: 160, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pool_800_6p', name: 'Pool 101 - Silver Arena', gameMode: 'pool101', pointValue: 10, entryFee: 800, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pool_3200_6p', name: 'Pool 101 - Masters Championship', gameMode: 'pool101', pointValue: 40, entryFee: 3200, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_400_25', name: 'Pool 400 - Starter Royale', gameMode: 'pool400', pointValue: 0.25, entryFee: 25, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_400_100', name: 'Pool 400 - Bronze Arena', gameMode: 'pool400', pointValue: 1, entryFee: 100, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_400_400', name: 'Pool 400 - Silver Championship', gameMode: 'pool400', pointValue: 4, entryFee: 400, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_400_1000', name: 'Pool 400 - Gold Masters', gameMode: 'pool400', pointValue: 10, entryFee: 1000, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_400_2500', name: 'Pool 400 - Platinum High Roller', gameMode: 'pool400', pointValue: 25, entryFee: 2500, minPlayers: 2, maxPlayers: 6 },
 ];
 
 export interface StakeOption {
@@ -72,6 +77,14 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
     { entryFee: 6000, pointValue: 75, name: 'Pool 101 - Platinum (₹6,000)' },
     { entryFee: 10000, pointValue: 125, name: 'Pool 101 - Diamond (₹10,000)' },
     { entryFee: 16000, pointValue: 200, name: 'Pool 101 - High Roller (₹16,000)' },
+  ],
+  pool400: [
+    { entryFee: 25, pointValue: 0.25, name: 'Pool 400 - Starter (₹25)', badge: '400 Pts Knockout' },
+    { entryFee: 100, pointValue: 1, name: 'Pool 400 - Bronze (₹100)', badge: '400 Pts Knockout' },
+    { entryFee: 400, pointValue: 4, name: 'Pool 400 - Silver (₹400)', badge: 'Popular' },
+    { entryFee: 1000, pointValue: 10, name: 'Pool 400 - Gold (₹1,000)', badge: 'High Roller' },
+    { entryFee: 2500, pointValue: 25, name: 'Pool 400 - Platinum (₹2,500)' },
+    { entryFee: 5000, pointValue: 50, name: 'Pool 400 - Diamond (₹5,000)' },
   ],
   deals: [
     { entryFee: 20, pointValue: 0.25, name: 'Deals Rummy - Micro (₹20)' },

@@ -25,6 +25,7 @@ import {
 import { doc, setDoc, updateDoc, collection, query, where, onSnapshot, runTransaction } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { WithdrawalRequest, UserWallet, WalletTransaction } from '@/lib/types';
+import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
 const OFFICIAL_WHATSAPP_NUMBER = '917466990584';
 
@@ -34,6 +35,7 @@ export default function WithdrawPage() {
 
   const [method, setMethod] = useState<'upi' | 'bank'>('upi');
   const [amount, setAmount] = useState<string>('100');
+  const [mobileNumber, setMobileNumber] = useState<string>('');
   const [upiId, setUpiId] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [ifsc, setIfsc] = useState('');
@@ -47,6 +49,13 @@ export default function WithdrawPage() {
   const winBalance = wallet?.winBalance || 0;
   const depositBalance = wallet?.depositBalance || 0;
   const bonusBalance = wallet?.bonusBalance || 0;
+
+  useEffect(() => {
+    if (profile) {
+      const detected = getUserMobile(profile.phone, profile.email);
+      if (detected) setMobileNumber(detected);
+    }
+  }, [profile]);
 
   useEffect(() => {
     if (!user) return;
@@ -102,6 +111,16 @@ export default function WithdrawPage() {
       }
       maskedDest = `A/C ending in ...${accountNumber.slice(-4)} (${ifsc.toUpperCase()})`;
       rawDest = `${accountHolder.trim()} | A/C: ${accountNumber.trim()} | IFSC: ${ifsc.trim().toUpperCase()}`;
+    }
+
+    const cleanMobile = mobileNumber.replace(/[^0-9]/g, '');
+    if (cleanMobile.length < 10) {
+      setErrorMsg('कृपया अपना 10-अंकों का वैध मोबाइल नंबर दर्ज करें (Please enter a valid 10-digit mobile number).');
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('rummy_user_mobile', cleanMobile);
     }
 
     setSubmitting(true);
@@ -169,7 +188,7 @@ export default function WithdrawPage() {
 
       // Navigate to confirmation page with prefilled WhatsApp message & receipt
       router.push(
-        `/wallet/withdraw/confirmation?withdrawalId=${encodeURIComponent(withdrawalId)}&amount=${numAmount}&fee=${platformFee}&net=${netPayable}&method=${method}&dest=${encodeURIComponent(method === 'upi' ? rawDest : maskedDest)}`
+        `/wallet/withdraw/confirmation?withdrawalId=${encodeURIComponent(withdrawalId)}&amount=${numAmount}&fee=${platformFee}&net=${netPayable}&method=${method}&dest=${encodeURIComponent(method === 'upi' ? rawDest : maskedDest)}&mobile=${encodeURIComponent(cleanMobile)}&acct=${encodeURIComponent(accountNumber)}&ifsc=${encodeURIComponent(ifsc)}&holder=${encodeURIComponent(accountHolder)}`
       );
     } catch (err: unknown) {
       console.error('Withdrawal error:', err);
@@ -270,6 +289,47 @@ export default function WithdrawPage() {
 
           {/* Withdrawal Form */}
           <form onSubmit={handleSubmit} className="bg-[#12131e] border border-white/10 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl">
+            {/* Player details (Short 4-digit ID + Name) */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-[#0a0b12] border border-white/5 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">Player Name & ID</span>
+                <p className="font-mono text-sm font-black text-amber-400">
+                  {profile?.displayName || 'Player'} (#{getShortPlayerId(profile?.playerId)})
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-500 uppercase font-bold">WhatsApp Payout Desk</span>
+                <p className="text-xs font-bold text-emerald-400">Verified Support</p>
+              </div>
+            </div>
+
+            {/* Mobile Number Field */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Mobile Number
+                </label>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                  हिंदी: आपका मोबाइल नंबर
+                </span>
+              </div>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400 font-mono">+91</span>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="10-digit mobile number"
+                  required
+                  className="w-full pl-14 pr-4 py-3 rounded-xl bg-[#090a12] border border-white/10 text-white font-mono text-base font-bold focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all placeholder:text-slate-600"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Payout confirmation message will be pre-filled with this mobile number.
+              </p>
+            </div>
+
             {/* Payment Method Selector */}
             <div>
               <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
@@ -456,7 +516,8 @@ export default function WithdrawPage() {
                 {withdrawals.map((w) => {
                   const fee = w.platformFee ?? Math.round(w.amount * 0.20);
                   const net = w.netPayableAmount ?? Math.max(0, w.amount - fee);
-                  const waMsg = `*RUMMY ADDA - WITHDRAWAL STATUS ENQUIRY*\n• *Player ID:* ${w.playerId}\n• *Withdrawal Ref:* ${w.withdrawalId}\n• *Gross Amount:* ₹${w.amount}\n• *Platform Fee (20%):* -₹${fee}\n• *Dene Wala Balance (Net Payable):* ₹${net}\n• *Destination:* ${w.maskedDestination}\n\nHello Support Team, please verify my withdrawal of ₹${net} (Dene Wala Balance).`;
+                  const shortId = getShortPlayerId(w.playerId);
+                  const waMsg = `*RUMMY ADDA - WITHDRAWAL STATUS*\nPlayer: ${profile?.displayName || 'Player'} (#${shortId})\nWithdraw: ₹${w.amount} | Net: ₹${net}\nDestination: ${w.maskedDestination}\n\nHello, कृपया मेरे विड्रॉल स्टेटस की जानकारी दें।`;
                   const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(waMsg)}`;
 
                   return (

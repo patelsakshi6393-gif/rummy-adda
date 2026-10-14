@@ -206,7 +206,50 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* 3. DEALS RUMMY */}
+          {/* 3. POOL 400 RUMMY */}
+          <div
+            onClick={() => handleSelectFormat('pool400')}
+            className="group cursor-pointer bg-gradient-to-r from-[#17150a] via-[#110f06] to-[#1e1908] hover:from-[#24200e] hover:to-[#2e260e] border border-amber-500/40 hover:border-amber-300 rounded-3xl p-6 sm:p-7 shadow-xl hover:shadow-2xl hover:shadow-amber-500/10 transition-all duration-200 hover:scale-[1.01] flex items-center justify-between"
+          >
+            <div className="flex items-center gap-4 sm:gap-6">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-tr from-amber-900 via-amber-600 to-yellow-400 p-0.5 shadow-lg shadow-amber-900/30 shrink-0">
+                <div className="w-full h-full bg-[#120f05] rounded-[14px] flex items-center justify-center text-3xl sm:text-4xl font-black text-amber-300">
+                  🏆
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black text-[10px] uppercase tracking-wider border border-amber-500/30">
+                    400 Points Knockout
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                    400 पूल रमी
+                  </span>
+                  <span className="text-xs text-slate-400 flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-slate-500" />
+                    <span>2 to 6 Real Players</span>
+                  </span>
+                </div>
+
+                <h2 className="text-xl sm:text-2xl font-black text-white group-hover:text-amber-300 transition-colors">
+                  3. Pool 400 Rummy
+                </h2>
+
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  Survive below 400 points in extended championship rounds. Lowest penalty points claims the massive pool!
+                </p>
+              </div>
+            </div>
+
+            <div className="shrink-0 pl-3">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/10 group-hover:bg-amber-400 group-hover:text-black text-amber-400 flex items-center justify-center transition-all shadow">
+                <ChevronRight className="w-6 h-6 group-hover:translate-x-0.5 transition-transform" />
+              </div>
+            </div>
+          </div>
+
+          {/* 4. DEALS RUMMY */}
           <div
             onClick={() => handleSelectFormat('deals')}
             className="group cursor-pointer bg-gradient-to-r from-[#1b1219] via-[#140e13] to-[#20111a] hover:from-[#291723] hover:to-[#311b2b] border border-rose-500/30 hover:border-rose-400 rounded-3xl p-6 sm:p-7 shadow-xl hover:shadow-2xl hover:shadow-rose-500/10 transition-all duration-200 hover:scale-[1.01] flex items-center justify-between"
@@ -230,7 +273,7 @@ export default function HomePage() {
                 </div>
 
                 <h2 className="text-xl sm:text-2xl font-black text-white group-hover:text-rose-300 transition-colors">
-                  3. Deals Rummy
+                  4. Deals Rummy
                 </h2>
 
                 <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">

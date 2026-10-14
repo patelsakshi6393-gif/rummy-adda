@@ -8,7 +8,7 @@ export interface Card {
   isPrintedJoker?: boolean;
 }
 
-export type GameMode = 'points' | 'pool101' | 'deals';
+export type GameMode = 'points' | 'pool101' | 'pool400' | 'deals';
 
 export type GameStatus =
   | 'WAITING'

@@ -23,6 +23,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { WithdrawalRequest } from '@/lib/types';
+import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
 const OFFICIAL_WHATSAPP_NUMBER = '917466990584';
 
@@ -38,6 +39,10 @@ function WithdrawConfirmationContent() {
   const paramNet = searchParams.get('net');
   const paramMethod = searchParams.get('method') || 'upi';
   const paramDest = searchParams.get('dest') || '';
+  const paramMobile = searchParams.get('mobile');
+  const paramAcct = searchParams.get('acct');
+  const paramIfsc = searchParams.get('ifsc');
+  const paramHolder = searchParams.get('holder');
 
   // Optional Firestore fetch if opened directly with only withdrawalId
   useEffect(() => {
@@ -63,33 +68,39 @@ function WithdrawConfirmationContent() {
   const method = dbData?.method || paramMethod;
   const destination = dbData?.rawDestination || dbData?.maskedDestination || paramDest || 'Registered Account';
 
-  const playerId = profile?.playerId || dbData?.playerId || 'PLAYER_ID';
-  const userDisplayName = profile?.displayName || dbData?.playerName || 'Rummy Player';
-  const userUid = user?.uid || dbData?.uid || '';
+  const shortId = getShortPlayerId(profile?.playerId || dbData?.playerId);
+  const userDisplayName = profile?.displayName || dbData?.playerName || 'Player';
+  const detectedMobile = getUserMobile(profile?.phone, profile?.email);
+  const mobileNumber = paramMobile || detectedMobile || 'Not Provided';
 
   const formattedGross = grossAmount.toLocaleString('en-IN');
   const formattedFee = platformFee.toLocaleString('en-IN');
   const formattedNet = netPayable.toLocaleString('en-IN');
 
-  const prefilledMessage = 
-`*RUMMY ADDA - WITHDRAWAL CASHOUT REQUEST*
---------------------------------
-• *Player ID:* ${playerId}
-• *User UID:* ${userUid}
-• *Player Name:* ${userDisplayName}
-• *Withdrawal Ref ID:* ${withdrawalId}
---------------------------------
-• *Requested Cashout:* ₹${formattedGross}
-• *Platform Fee (${feePercent}% Commission):* -₹${formattedFee}
---------------------------------
-👉 *DENE WALA BALANCE (Net Payable):* ₹${formattedNet}
---------------------------------
-• *Payout Method:* ${method.toUpperCase()}
-• *Payment Destination:* ${destination}
---------------------------------
-Hello Support Team, maine apne RummyAdda wallet se ₹${formattedGross} ka withdrawal request kiya hai.
-${feePercent}% platform commission (-₹${formattedFee}) ke baad mera dene wala balance ₹${formattedNet} banta hai.
-Kripya mera dene wala balance ₹${formattedNet} mere ${method.toUpperCase()} (${destination}) par transfer karein. Shukriya!`;
+  const bankDetailsText = paramAcct
+    ? `A/C: ${paramAcct} | IFSC: ${paramIfsc || ''} | Name: ${paramHolder || userDisplayName}`
+    : destination;
+
+  // Short, clean WhatsApp message pre-filled with player ID (short), name, mobile, amounts, and destination
+  const prefilledMessage = method === 'upi'
+    ? `*RUMMY ADDA - WITHDRAWAL*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${mobileNumber}
+Withdraw Amount: ₹${formattedGross}
+Platform Fee (${feePercent}%): -₹${formattedFee}
+Net Payable: ₹${formattedNet}
+UPI ID: ${destination}
+
+Hello, मुझे ₹${formattedNet} विड्रॉल करना है। कृपया पेमेंट ट्रांसफर करें।`
+    : `*RUMMY ADDA - WITHDRAWAL*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${mobileNumber}
+Withdraw Amount: ₹${formattedGross}
+Platform Fee (${feePercent}%): -₹${formattedFee}
+Net Payable: ₹${formattedNet}
+Bank Details: ${bankDetailsText}
+
+Hello, मुझे ₹${formattedNet} विड्रॉल करना है। कृपया पेमेंट ट्रांसफर करें।`;
 
   const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(prefilledMessage)}`;
 
@@ -186,7 +197,10 @@ Kripya mera dene wala balance ₹${formattedNet} mere ${method.toUpperCase()} ($
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <MessageCircle className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-bold text-white">Prefilled Message with 20% Commission</span>
+            <span className="text-xs font-bold text-white">Prefilled Message Preview</span>
+            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+              हिंदी: संक्षिप्त मेसेज
+            </span>
           </div>
           <button
             type="button"
@@ -198,12 +212,12 @@ Kripya mera dene wala balance ₹${formattedNet} mere ${method.toUpperCase()} ($
           </button>
         </div>
 
-        <div className="bg-[#090a12] p-4 rounded-xl border border-white/5 font-mono text-[11px] text-slate-200 whitespace-pre-wrap leading-relaxed select-all">
+        <div className="bg-[#090a12] p-4 rounded-xl border border-white/5 font-mono text-xs text-emerald-300 whitespace-pre-wrap leading-relaxed select-all">
           {prefilledMessage}
         </div>
 
         {/* WhatsApp Direct Action Button */}
-        <div className="pt-2">
+        <div className="pt-2 space-y-2">
           <a
             href={waUrl}
             target="_blank"
@@ -211,9 +225,14 @@ Kripya mera dene wala balance ₹${formattedNet} mere ${method.toUpperCase()} ($
             className="w-full py-4 px-6 bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] active:scale-95"
           >
             <MessageCircle className="w-4 h-4 fill-current" />
-            <span>Send Withdrawal Request on WhatsApp Support</span>
+            <span>SEND WITHDRAWAL REQUEST ON WHATSAPP</span>
             <ExternalLink className="w-3.5 h-3.5 ml-1" />
           </a>
+          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+            <p className="text-xs text-amber-300 font-semibold">
+              💡 सेंड दबाते ही यह मेसेज WhatsApp पर सीधा चला जाएगा।
+            </p>
+          </div>
           <p className="text-[10px] text-slate-500 text-center mt-2">
             Official Support Desk WhatsApp (+91 7466990584) will verify and process your ₹{formattedNet} payout.
           </p>

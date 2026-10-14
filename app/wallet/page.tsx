@@ -75,6 +75,9 @@ export default function WalletPage() {
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>+ ADD CASH</span>
+                <span className="ml-1 px-1.5 py-0.2 rounded bg-black/20 text-black font-extrabold text-[9px]">
+                  डिपॉजिट
+                </span>
               </Link>
               <Link
                 href="/wallet/withdraw"
@@ -86,6 +89,9 @@ export default function WalletPage() {
               >
                 <ArrowUpRight className="w-4 h-4" />
                 <span>WITHDRAW</span>
+                <span className="ml-1 px-1.5 py-0.2 rounded bg-white/20 text-white font-extrabold text-[9px]">
+                  विड्रॉल
+                </span>
               </Link>
             </div>
           </div>
@@ -138,7 +144,7 @@ export default function WalletPage() {
                 ₹{depositBal.toLocaleString('en-IN')}
               </p>
               <p className="text-[12px] text-slate-400">
-                Used first to join any table format (Points, Pool 101, or Deals Rummy).
+                Used first to join any table format (Points, Pool 101, Pool 400, or Deals Rummy).
               </p>
               <div className="pt-3 border-t border-white/5 flex items-center justify-between">
                 <span className="text-[11px] text-slate-500">Instant WhatsApp Deposit</span>

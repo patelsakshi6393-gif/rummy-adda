@@ -8,6 +8,7 @@ import { AuthGuard } from '@/components/AuthGuard';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { MessageCircle, ExternalLink, Copy, Loader2 } from 'lucide-react';
+import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
 const OFFICIAL_WHATSAPP_NUMBER = '917466990584';
 
@@ -20,20 +21,20 @@ function WhatsAppRedirectContent() {
   const amountStr = searchParams.get('amount');
   const amountNumber = amountStr ? parseInt(amountStr, 10) : 0;
   const formattedAmount = amountNumber > 0 ? amountNumber.toLocaleString('en-IN') : '...';
-  const playerId = profile?.playerId || 'PLAYER_ID';
-  const userDisplayName = profile?.displayName || 'Rummy Player';
-  const userUid = user?.uid || '';
+  
+  const shortId = getShortPlayerId(profile?.playerId);
+  const userDisplayName = profile?.displayName || 'Player';
+  const paramMobile = searchParams.get('mobile');
+  const detectedMobile = getUserMobile(profile?.phone, profile?.email);
+  const mobileNumber = paramMobile || detectedMobile || 'Not Provided';
 
   const messageText = 
-`*RUMMY ADDA - DEPOSIT REQUEST*
---------------------------------
-• *Deposit Amount:* ₹${formattedAmount}
-• *Player ID:* ${playerId}
-• *User UID:* ${userUid}
-• *Player Name:* ${userDisplayName}
-• *Deposit Ref ID:* ${depositId}
---------------------------------
-Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my RummyAdda wallet. Please send the payment QR / UPI details to complete this deposit.`;
+`*RUMMY ADDA - DEPOSIT*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${mobileNumber}
+Deposit Amount: ₹${formattedAmount}
+
+Hello, मुझे ₹${formattedAmount} डिपॉजिट करना है। कृपया QR Code / UPI Details भेजें।`;
 
   const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(messageText)}`;
 
@@ -50,16 +51,21 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
       </div>
       
       <div>
-        <h1 className="text-2xl font-black text-white">Deposit Details Ready</h1>
+        <h1 className="text-2xl font-black text-white">Deposit Request Ready</h1>
         <p className="text-xs text-slate-400 mt-1">
-          Your prefilled WhatsApp request includes your Player ID, User ID, and Deposit Amount.
+          Your concise WhatsApp message is prepared with your Player ID and selected amount.
         </p>
       </div>
 
       {/* Prefilled Summary Card */}
       <div className="bg-[#12131e] border border-white/10 rounded-2xl p-5 text-left space-y-3 shadow-xl">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
-          <span className="text-xs text-slate-400 font-bold">Prefilled Message Preview</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-bold">Prefilled Message Preview</span>
+            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+              हिंदी: संक्षिप्त मेसेज
+            </span>
+          </div>
           <button
             type="button"
             onClick={handleCopy}
@@ -70,18 +76,22 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
           </button>
         </div>
 
-        <div className="bg-[#090a12] p-4 rounded-xl border border-white/5 font-mono text-xs text-slate-200 whitespace-pre-wrap leading-relaxed select-all">
+        <div className="bg-[#090a12] p-4 rounded-xl border border-white/5 font-mono text-xs text-emerald-300 whitespace-pre-wrap leading-relaxed select-all">
           {messageText}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+        <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
           <div className="bg-white/5 p-3 rounded-lg">
-            <span className="text-[10px] text-slate-500 block uppercase font-bold">Amount</span>
-            <span className="font-bold text-amber-400 text-sm">₹{formattedAmount}</span>
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Player</span>
+            <span className="font-bold text-white text-xs truncate block">{userDisplayName} (#{shortId})</span>
           </div>
           <div className="bg-white/5 p-3 rounded-lg">
-            <span className="text-[10px] text-slate-500 block uppercase font-bold">Player ID</span>
-            <span className="font-bold text-white text-sm">{playerId}</span>
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Mobile</span>
+            <span className="font-bold text-amber-300 text-xs truncate block">{mobileNumber}</span>
+          </div>
+          <div className="bg-white/5 p-3 rounded-lg">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Amount</span>
+            <span className="font-bold text-emerald-400 text-sm">₹{formattedAmount}</span>
           </div>
         </div>
       </div>

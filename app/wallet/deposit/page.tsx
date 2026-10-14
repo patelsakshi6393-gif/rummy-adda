@@ -19,6 +19,7 @@ import {
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { DepositRequest } from '@/lib/types';
+import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
 const PRESET_AMOUNTS = [100, 500, 1000, 2000, 5000, 10000];
 const OFFICIAL_WHATSAPP_NUMBER = '917466990584'; // +91 74669 90584
@@ -28,8 +29,16 @@ export default function DepositPage() {
   const { user, profile } = useAuth();
   const [amount, setAmount] = useState<number>(1000);
   const [customAmount, setCustomAmount] = useState<string>('1000');
+  const [mobileNumber, setMobileNumber] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  React.useEffect(() => {
+    if (profile) {
+      const detected = getUserMobile(profile.phone, profile.email);
+      if (detected) setMobileNumber(detected);
+    }
+  }, [profile]);
 
   const handleSelectPreset = (val: number) => {
     setAmount(val);
@@ -57,6 +66,17 @@ export default function DepositPage() {
       return;
     }
 
+    const cleanMobile = mobileNumber.replace(/[^0-9]/g, '');
+    if (cleanMobile.length < 10) {
+      setErrorMsg('कृपया अपना 10-अंकों का वैध मोबाइल नंबर दर्ज करें (Please enter a valid 10-digit mobile number).');
+      return;
+    }
+
+    // Persist mobile for seamless future transactions
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('rummy_user_mobile', cleanMobile);
+    }
+
     setSubmitting(true);
     try {
       const depositId = `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -74,20 +94,17 @@ export default function DepositPage() {
 
       await setDoc(doc(db, 'deposits', depositId), newDeposit);
 
-      // Prepare comprehensive prefilled WhatsApp message with User ID, Player ID, Amount & Ref
-      const userDisplayName = profile.displayName || 'Rummy Player';
+      // Clean short WhatsApp message as requested: Player ID (2-4 digits + name), Mobile, Pre-filled amount
+      const shortId = getShortPlayerId(profile.playerId);
+      const userDisplayName = profile.displayName || 'Player';
       const formattedAmount = amount.toLocaleString('en-IN');
       const messageText = 
-`*RUMMY ADDA - DEPOSIT REQUEST*
---------------------------------
-• *Deposit Amount:* ₹${formattedAmount}
-• *Player ID:* ${profile.playerId}
-• *User UID:* ${user.uid}
-• *Player Name:* ${userDisplayName}
-• *Deposit Ref ID:* ${depositId}
-• *Date & Time:* ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
---------------------------------
-Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my RummyAdda wallet. Please send the payment QR / UPI details to complete this deposit.`;
+`*RUMMY ADDA - DEPOSIT*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${cleanMobile}
+Deposit Amount: ₹${formattedAmount}
+
+Hello, मुझे ₹${formattedAmount} डिपॉजिट करना है। कृपया QR Code / UPI Details भेजें।`;
 
       const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(messageText)}`;
 
@@ -97,7 +114,7 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
       }
 
       // Navigate to handoff page with details
-      router.push(`/wallet/deposit/whatsapp?depositId=${encodeURIComponent(depositId)}&amount=${amount}`);
+      router.push(`/wallet/deposit/whatsapp?depositId=${encodeURIComponent(depositId)}&amount=${amount}&mobile=${encodeURIComponent(cleanMobile)}`);
     } catch (err) {
       console.error(err);
       setErrorMsg('Failed to create deposit request. Please try again.');
@@ -144,11 +161,13 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
 
           {/* Deposit Form */}
           <form onSubmit={handleSubmit} className="bg-[#12131e] border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl">
-            {/* Player details */}
+            {/* Player details (Short 4-digit ID + Name) */}
             <div className="flex items-center justify-between p-4 rounded-xl bg-[#0a0b12] border border-white/5 text-xs">
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Your Player ID</span>
-                <p className="font-mono text-sm font-black text-amber-400">{profile?.playerId}</p>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">Player Name & ID</span>
+                <p className="font-mono text-sm font-black text-amber-400">
+                  {profile?.displayName || 'Player'} (#{getShortPlayerId(profile?.playerId)})
+                </p>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-slate-500 uppercase font-bold">WhatsApp Desk</span>
@@ -156,11 +175,43 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
               </div>
             </div>
 
+            {/* Mobile Number Field */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Mobile Number
+                </label>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+                  हिंदी: आपका मोबाइल नंबर
+                </span>
+              </div>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400 font-mono">+91</span>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="10-digit mobile number"
+                  required
+                  className="w-full pl-14 pr-4 py-3 rounded-xl bg-[#090a12] border border-white/10 text-white font-mono text-base font-bold focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all placeholder:text-slate-600"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Deposit update confirmation will be sent to this WhatsApp mobile number.
+              </p>
+            </div>
+
             {/* Chip Presets */}
             <div>
-              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
-                Select Chip Amount
-              </label>
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Select Chip Amount
+                </label>
+                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30">
+                  हिंदी: राशि चुनें
+                </span>
+              </div>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
                 {PRESET_AMOUNTS.map((val) => (
                   <button
@@ -212,12 +263,18 @@ Hello Support Team, I want to add cash/deposit ₹${formattedAmount} to my Rummy
                 ) : (
                   <>
                     <MessageCircle className="w-5 h-5 fill-current" />
-                    <span>CONTINUE TO OFFICIAL WHATSAPP (₹{amount.toLocaleString('en-IN')})</span>
+                    <span>SEND ON WHATSAPP (₹{amount.toLocaleString('en-IN')})</span>
                   </>
                 )}
               </button>
 
-              <div className="flex items-center justify-center gap-4 text-xs text-slate-400 pt-2">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                <p className="text-xs text-amber-300 font-semibold">
+                  💡 सेंड दबाते ही यह मेसेज WhatsApp पर सीधा चला जाएगा।
+                </p>
+              </div>
+
+              <div className="flex items-center justify-center gap-4 text-xs text-slate-400 pt-1">
                 <Link href="/wallet/deposit/pending" className="hover:text-amber-400 underline">
                   View Your Pending Deposit Requests
                 </Link>
