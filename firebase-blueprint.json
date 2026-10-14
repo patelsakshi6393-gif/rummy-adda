@@ -1,0 +1,228 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated player account profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "playerId": { "type": "string", "description": "Unique format RA-XXXXXX identifier" },
+        "displayName": { "type": "string", "maxLength": 60 },
+        "email": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["player", "admin", "support"] },
+        "accountStatus": { "type": "string", "enum": ["active", "suspended", "verified"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "playerId", "displayName"]
+    },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "User financial balance ledger container",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "depositBalance": { "type": "number" },
+        "winBalance": { "type": "number" },
+        "bonusBalance": { "type": "number" },
+        "rewardPoints": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "depositBalance", "winBalance", "bonusBalance"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Ledger entry for wallet transactions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "type": { "type": "string", "enum": ["deposit", "withdrawal", "game_entry", "game_win", "game_loss", "reward", "refund", "adjustment"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed", "cancelled"] },
+        "description": { "type": "string", "maxLength": 200 },
+        "referenceId": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "uid", "type", "amount", "status", "createdAt"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "User deposit request tracking",
+      "type": "object",
+      "properties": {
+        "depositId": { "type": "string" },
+        "uid": { "type": "string" },
+        "playerId": { "type": "string" },
+        "requestedAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "cancelled"] },
+        "whatsappOpenedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "adminNote": { "type": "string" }
+      },
+      "required": ["depositId", "uid", "playerId", "requestedAmount", "status", "createdAt"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "User cashout request",
+      "type": "object",
+      "properties": {
+        "withdrawalId": { "type": "string" },
+        "uid": { "type": "string" },
+        "playerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["upi", "bank"] },
+        "maskedDestination": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["pending", "processing", "paid", "rejected", "failed"] },
+        "createdAt": { "type": "string" },
+        "processedAt": { "type": "string" }
+      },
+      "required": ["withdrawalId", "uid", "playerId", "amount", "method", "status", "createdAt"]
+    },
+    "GameTable": {
+      "title": "GameTable",
+      "description": "Real-time room listing & occupancy",
+      "type": "object",
+      "properties": {
+        "tableId": { "type": "string" },
+        "name": { "type": "string" },
+        "gameMode": { "type": "string", "enum": ["points", "pool101", "deals"] },
+        "pointValue": { "type": "number" },
+        "entryFee": { "type": "number" },
+        "minPlayers": { "type": "number" },
+        "maxPlayers": { "type": "number" },
+        "currentPlayers": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "countdown", "playing", "finished"] },
+        "activeGameId": { "type": "string" },
+        "countdownStartedAt": { "type": "string" },
+        "countdownEndsAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["tableId", "gameMode", "minPlayers", "maxPlayers", "status"]
+    },
+    "Game": {
+      "title": "Game",
+      "description": "Server-authoritative live game match session",
+      "type": "object",
+      "properties": {
+        "gameId": { "type": "string" },
+        "tableId": { "type": "string" },
+        "mode": { "type": "string", "enum": ["points", "pool101", "deals"] },
+        "pointValue": { "type": "number" },
+        "entryFee": { "type": "number" },
+        "playerCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["WAITING", "COUNTDOWN", "TOSS", "DEAL", "PLAYING", "DECLARE", "RESULT", "COMPLETED"] },
+        "dealerUid": { "type": "string" },
+        "wildJoker": { "type": "object" },
+        "turnUid": { "type": "string" },
+        "turnStartedAt": { "type": "number" },
+        "turnDeadline": { "type": "number" },
+        "openDeck": { "type": "array" },
+        "discardHistory": { "type": "array" },
+        "closedDeckCount": { "type": "number" },
+        "winnerUid": { "type": "string" },
+        "resultData": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["gameId", "tableId", "status", "mode"]
+    },
+    "GamePlayer": {
+      "title": "GamePlayer",
+      "description": "Player state in an active match",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "playerId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "seatIndex": { "type": "number" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "dropped", "declared", "eliminated"] },
+        "isDealer": { "type": "boolean" },
+        "cardCount": { "type": "number" },
+        "score": { "type": "number" },
+        "connected": { "type": "boolean" },
+        "tossCard": { "type": "object" },
+        "cards": { "type": "array" },
+        "joinedAt": { "type": "string" }
+      },
+      "required": ["uid", "playerId", "displayName", "seatIndex", "status"]
+    },
+    "Tournament": {
+      "title": "Tournament",
+      "description": "Multi-table competitive tournament event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["freeroll", "cash", "mega"] },
+        "prizePool": { "type": "number" },
+        "entryFee": { "type": "number" },
+        "startTime": { "type": "string" },
+        "status": { "type": "string", "enum": ["upcoming", "registering", "running", "completed"] },
+        "registeredCount": { "type": "number" },
+        "maxParticipants": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "entryFee", "prizePool", "status"]
+    },
+    "NotificationPreference": {
+      "title": "NotificationPreference",
+      "description": "User notification toggle options",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "gameAlerts": { "type": "boolean" },
+        "accountAlerts": { "type": "boolean" },
+        "tournamentAlerts": { "type": "boolean" },
+        "promotionAlerts": { "type": "boolean" }
+      },
+      "required": ["uid"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile document"
+    },
+    "/wallets/{uid}": {
+      "schema": { "$ref": "#/entities/Wallet" },
+      "description": "Secure wallet balances"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Financial ledger transactions"
+    },
+    "/deposits/{depositId}": {
+      "schema": { "$ref": "#/entities/Deposit" },
+      "description": "User deposit requests"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/Withdrawal" },
+      "description": "User withdrawal requests"
+    },
+    "/gameTables/{tableId}": {
+      "schema": { "$ref": "#/entities/GameTable" },
+      "description": "Public lobby rooms & tables"
+    },
+    "/games/{gameId}": {
+      "schema": { "$ref": "#/entities/Game" },
+      "description": "Active multiplayer match session"
+    },
+    "/games/{gameId}/players/{uid}": {
+      "schema": { "$ref": "#/entities/GamePlayer" },
+      "description": "Private player hand & match status"
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": { "$ref": "#/entities/Tournament" },
+      "description": "Scheduled tournaments"
+    },
+    "/notificationPreferences/{uid}": {
+      "schema": { "$ref": "#/entities/NotificationPreference" },
+      "description": "User notification settings"
+    }
+  }
+}

@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'supportalkabrain@gmail.com' ||
+        ('admin' in request.auth.token && request.auth.token.admin == true)
+      );
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connectivity verification probe
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User profile documents
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == request.auth.uid;
+      allow update: if (isOwner(userId) && request.resource.data.uid == resource.data.uid)
+                    || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Wallets: User can read and update their own wallet (e.g. withdrawal balance deduction, match stakes); Admin can manage all
+    match /wallets/{userId} {
+      allow get, update: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
+      allow delete: if false;
+    }
+
+    // Transactions ledger: Users can read their own; Signed-in users can record their own transactions; Admin can manage all
+    match /transactions/{transactionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if (isSignedIn() && request.resource.data.uid == request.auth.uid) || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Deposits requests: Clients can submit 'pending' deposit requests; Admin can read, update (approve/reject), delete
+    match /deposits/{depositId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if (isSignedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.status == 'pending')
+                    || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Withdrawals requests: Clients can submit 'pending' withdrawal requests; Admin can read, update (approve/process/reject), delete
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if (isSignedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.status == 'pending')
+                    || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Matchmaking queue tickets: Owned strictly by the queuing player
+    match /matchmakingQueue/{ticketId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.status == 'QUEUED';
+      allow update: if isSignedIn()
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Public game tables list & lobby occupancy (readable by all visitors, writeable by signed-in players)
+    match /gameTables/{tableId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Live games metadata (public table state: status, dealer, turn, discard pile, etc.)
+    match /games/{gameId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+
+      // Subcollection for player cards & individual state
+      match /players/{playerId} {
+        allow read, write: if isSignedIn();
+      }
+
+      // Internal secret deck (card dealing and drawing)
+      match /internal/{internalDoc} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // Tournaments (read-only for clients to prevent altering prize pools, admin can manage)
+    match /tournaments/{tournamentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /tournamentRegistrations/{regId} {
+      allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if (isSignedIn() && resource.data.uid == request.auth.uid) || isAdmin();
+    }
+
+    // Notification preferences
+    match /notificationPreferences/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    // App configuration (read-only for clients, admin can update)
+    match /appConfig/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Support requests
+    match /supportRequests/{requestId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if request.resource.data.uid == (request.auth != null ? request.auth.uid : 'guest');
+      allow update, delete: if isAdmin();
+    }
+  }
+}

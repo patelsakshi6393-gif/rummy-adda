@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for crediting ₹20 non-withdrawable Welcome Bonus Balance to every new account. Configures total playable balance calculation, priority deduction (deposit first, bonus credits when deposit is zero), 100% withdrawable net game winnings, and strict locking against withdrawal of bonus funds.",
+  "updatedAt": "2026-10-13T14:26:35.963375310Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

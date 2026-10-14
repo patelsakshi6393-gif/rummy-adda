@@ -1,0 +1,9 @@
+{
+  "appId": "com.rummyadda.app",
+  "appName": "RummyAdda",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

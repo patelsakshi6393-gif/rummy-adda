@@ -1,0 +1,7 @@
+android/
+www/
+*.apk
+.gradle/
+.next/
+node_modules/
+tests/

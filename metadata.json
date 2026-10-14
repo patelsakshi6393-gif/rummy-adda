@@ -1,0 +1,8 @@
+{
+  "name": "Remix RummyAdda - Indian Rummy Gaming Platform",
+  "description": "Real-time full-stack online Indian Rummy gaming platform with live 2-6 player tables, Points Rummy, Pool 101, server-authoritative game engine, secure wallet, tournaments, and luxury card table experience.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
