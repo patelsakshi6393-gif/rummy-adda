@@ -15,15 +15,36 @@ import {
   Lock,
   PlusCircle,
   BookOpen,
+  Download,
+  Smartphone,
 } from 'lucide-react';
 import { GameMode, getPlayableBalance } from '@/lib/types';
 import { HowToPlayModal } from '@/components/HowToPlayModal';
-import { AuthGuard } from '@/components/AuthGuard';
+import { SplashScreen } from '@/components/SplashScreen';
 
 export default function HomePage() {
   const router = useRouter();
   const { user, wallet } = useAuth();
   const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+
+  // Check if splash was already passed in this browser session
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('splash') === 'true') {
+      setShowSplash(true);
+      return;
+    }
+    const hasPassed = sessionStorage.getItem('rummyadda_splash_passed');
+    if (hasPassed === 'true') {
+      setShowSplash(false);
+    }
+  }, []);
+
+  const handlePlayNow = () => {
+    sessionStorage.setItem('rummyadda_splash_passed', 'true');
+    setShowSplash(false);
+  };
 
   const depositBal = wallet?.depositBalance || 0;
   const winBal = wallet?.winBalance || 0;
@@ -34,10 +55,13 @@ export default function HomePage() {
     router.push(`/match/stakes?format=${format}`);
   };
 
+  if (showSplash) {
+    return <SplashScreen onPlayNow={handlePlayNow} />;
+  }
+
   return (
-    <AuthGuard>
-      <div className="min-h-screen flex flex-col bg-[#07070a] text-slate-100">
-        <Navbar />
+    <div className="min-h-screen flex flex-col bg-[#07070a] text-slate-100">
+      <Navbar />
 
         {/* Interactive How to Play Guide Modal */}
         <HowToPlayModal
@@ -95,6 +119,31 @@ export default function HomePage() {
             </Link>
           </div>
         )}
+
+        {/* Official Android App Download Banner */}
+        <div className="bg-gradient-to-r from-[#0c1226] via-[#101833] to-[#0c1226] border border-cyan-500/30 hover:border-amber-400/50 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xl transition-all">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+              <Smartphone className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <p className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-1.5">
+                <span>Play Anywhere with RummyAdda Android App</span>
+                <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] border border-emerald-500/30">Free APK</span>
+              </p>
+              <p className="text-[11px] text-slate-300">
+                Fast performance, instant tables, and ultra-smooth gameplay on your Android device.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowSplash(true)}
+            className="w-full sm:w-auto shrink-0 px-4 py-2 rounded-xl bg-[#f5ad18] hover:bg-[#ffba26] text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Download APK Screen</span>
+          </button>
+        </div>
 
         {/* Playable Balance Bar */}
         <div className="bg-[#10111b] border border-amber-500/20 rounded-2xl p-4 sm:p-5 flex items-center justify-between shadow-xl">
@@ -304,6 +353,5 @@ export default function HomePage() {
 
       <Footer />
     </div>
-    </AuthGuard>
   );
 }
