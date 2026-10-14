@@ -27,7 +27,6 @@ export default function TablesPage() {
   const allTiers: { mode: GameMode; modeTitle: string; option: StakeOption }[] = [
     ...STAKE_OPTIONS.points.map((opt) => ({ mode: 'points' as GameMode, modeTitle: 'पॉइंट्स रमी', option: opt })),
     ...STAKE_OPTIONS.pool101.map((opt) => ({ mode: 'pool101' as GameMode, modeTitle: 'पूल 101 रमी', option: opt })),
-    ...STAKE_OPTIONS.pool400.map((opt) => ({ mode: 'pool400' as GameMode, modeTitle: 'पूल 400 रमी', option: opt })),
     ...STAKE_OPTIONS.deals.map((opt) => ({ mode: 'deals' as GameMode, modeTitle: 'डील्स रमी', option: opt })),
   ];
 
@@ -80,7 +79,7 @@ export default function TablesPage() {
           {/* Format Filter Bar */}
           <div className="flex items-center gap-2 bg-[#11121d] border border-white/10 p-2 rounded-2xl overflow-x-auto">
             <span className="text-xs text-slate-400 font-semibold px-3">Format:</span>
-            {(['all', 'points', 'pool101', 'pool400', 'deals'] as const).map((m) => (
+            {(['all', 'points', 'pool101', 'deals'] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setFilterMode(m)}
@@ -88,7 +87,7 @@ export default function TablesPage() {
                   filterMode === m ? 'bg-amber-500 text-black shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                {m === 'all' ? 'All Formats' : m === 'points' ? '♠ Points' : m === 'pool101' ? '♥ Pool 101' : m === 'pool400' ? '🏆 Pool 400' : '♦ Deals'}
+                {m === 'all' ? 'All Formats' : m === 'points' ? '♠ Points' : m === 'pool101' ? '♥ Pool 101' : '♦ Deals'}
               </button>
             ))}
           </div>

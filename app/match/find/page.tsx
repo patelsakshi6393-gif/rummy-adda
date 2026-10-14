@@ -28,7 +28,7 @@ function FindMatchContent() {
   const { user, profile, wallet } = useAuth();
 
   const formatParam = (searchParams.get('format') || 'points') as GameMode;
-  const currentFormat: GameMode = ['points', 'pool101', 'pool400', 'deals'].includes(formatParam)
+  const currentFormat: GameMode = ['points', 'pool101', 'deals'].includes(formatParam)
     ? formatParam
     : 'points';
 
@@ -46,7 +46,6 @@ function FindMatchContent() {
   const formatTitles: Record<GameMode, { title: string; icon: string }> = {
     points: { title: 'Points Rummy', icon: '♠' },
     pool101: { title: 'Pool 101 Rummy', icon: '🏊' },
-    pool400: { title: 'Pool 400 Rummy', icon: '🏆' },
     deals: { title: 'Deals Rummy', icon: '🤝' },
   };
 

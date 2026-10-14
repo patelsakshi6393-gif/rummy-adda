@@ -493,7 +493,7 @@ export default function GameRoomPage() {
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <span className="text-[11px] sm:text-xs font-black tracking-wider text-white uppercase">
-                  {game?.mode === 'pool400' ? 'POOL 400' : game?.mode === 'pool101' ? 'POOL 101' : game?.mode} RUMMY
+                  {game?.mode === 'pool101' ? 'POOL 101' : game?.mode} RUMMY
                 </span>
                 <span className="text-slate-600 hidden xs:inline">•</span>
                 <span className="text-[10px] sm:text-[11px] font-mono text-amber-400 hidden xs:inline">
