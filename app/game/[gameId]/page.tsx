@@ -98,6 +98,7 @@ export default function GameRoomPage() {
 
   // Reference to prevent firing turn timeout repeatedly
   const timeoutHandledRef = useRef(false);
+  const isBotExecutingRef = useRef(false);
 
   // Device orientation state for mobile/tablet responsive layout
   const [isPortrait, setIsPortrait] = useState(false);
@@ -150,17 +151,27 @@ export default function GameRoomPage() {
   // Automated bot turn execution when playing practice match
   useEffect(() => {
     if (!game || game.status !== 'PLAYING' || !game.turnUid) return;
-    if (game.turnUid.startsWith('bot_')) {
+    const isBotTurn = game.turnUid.startsWith('bot_') || Boolean(players.find((p) => p.uid === game.turnUid)?.isBot);
+    if (isBotTurn) {
+      if (isBotExecutingRef.current) return;
+      isBotExecutingRef.current = true;
       const timer = setTimeout(async () => {
         try {
+          soundManager.playCardDraw();
           await playBotTurn(game.gameId, game.turnUid!);
+          soundManager.playCardDiscard();
         } catch (e) {
-          console.warn('Bot turn play:', e);
+          console.warn('Bot turn play error:', e);
+        } finally {
+          isBotExecutingRef.current = false;
         }
-      }, 1500);
-      return () => clearTimeout(timer);
+      }, 1000);
+      return () => {
+        clearTimeout(timer);
+        isBotExecutingRef.current = false;
+      };
     }
-  }, [game?.turnUid, game?.status, game?.gameId, game?.hasDrawn]);
+  }, [game?.turnUid, game?.status, game?.gameId, players]);
 
   // 1. Send player heartbeat every 10 seconds to keep room alive
   useEffect(() => {

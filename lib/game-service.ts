@@ -961,6 +961,8 @@ export async function startMatch(gameId: string): Promise<void> {
       wildJoker: wildJokerCard,
       openDeck: [openCard],
       closedDeckCount: deck.length,
+      playerUids: playersList.map((p) => p.uid),
+      playerCount: playersList.length,
       turnUid: startingPlayerUid,
       turnStartedAt,
       turnDeadline,
@@ -1061,8 +1063,9 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
   const playerRef = doc(db, 'games', gameId, 'players', playerUid);
   const playersRef = collection(db, 'games', gameId, 'players');
 
+  // Discover all players in this game to ensure no seated player is missed
   const playersSnap = await getDocs(playersRef);
-  const allPlayers = playersSnap.docs.map((d) => d.data() as GamePlayerState);
+  const discoveredUids = playersSnap.docs.map((d) => d.id);
 
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
@@ -1078,6 +1081,21 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
     if (!playerSnap.exists()) throw new Error('Player not found.');
     const playerData = playerSnap.data() as GamePlayerState;
 
+    // Read ALL player docs inside the transaction for consistency
+    const allPlayerUids = Array.from(new Set([
+      ...(gameData.playerUids || []),
+      ...discoveredUids,
+    ]));
+
+    const playerDocs: GamePlayerState[] = [];
+    for (const pUid of allPlayerUids) {
+      const pRef = doc(db, 'games', gameId, 'players', pUid);
+      const pSnap = await tx.get(pRef);
+      if (pSnap.exists()) {
+        playerDocs.push(pSnap.data() as GamePlayerState);
+      }
+    }
+
     const currentHand = playerData.cards || [];
     let cardIdx = currentHand.findIndex((c) => c.id === cardToDiscard.id);
     if (cardIdx === -1) {
@@ -1089,13 +1107,17 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
     const discardedCards = updatedHand.splice(cardIdx, 1);
     const discarded = discardedCards[0] || cardToDiscard;
 
-    const activePlayers = allPlayers
-      .filter((p) => p.status === 'playing' || p.status === 'waiting')
-      .sort((a, b) => a.seatIndex - b.seatIndex);
+    // Determine next player: ALWAYS pass turn to another active player!
+    const otherActivePlayers = playerDocs
+      .filter((p) => p.uid !== playerUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
-    const currentIndex = activePlayers.findIndex((p) => p.uid === playerUid);
-    const nextPlayerIndex = currentIndex >= 0 ? (currentIndex + 1) % activePlayers.length : 0;
-    const nextPlayerUid = activePlayers.length > 0 ? activePlayers[nextPlayerIndex]?.uid || playerUid : playerUid;
+    let nextPlayerUid = playerUid; // fallback only if literally no other player exists
+    if (otherActivePlayers.length > 0) {
+      const currentSeat = playerData.seatIndex || 0;
+      const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > currentSeat);
+      nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
+    }
 
     const now = Date.now();
     const nextDeadline = now + 60000; // 60s base turn timer
@@ -1197,45 +1219,123 @@ export async function startPracticeBotMatch(
 export async function playBotTurn(gameId: string, botUid: string): Promise<void> {
   const gameRef = doc(db, 'games', gameId);
   const botRef = doc(db, 'games', gameId, 'players', botUid);
+  const secretDeckRef = doc(db, 'games', gameId, 'internal', 'deck');
+  const playersRef = collection(db, 'games', gameId, 'players');
 
-  const gameSnap = await getDoc(gameRef);
-  if (!gameSnap.exists()) return;
-  const gameData = gameSnap.data() as GameState;
+  // Discover all players in this game
+  const playersSnap = await getDocs(playersRef);
+  const discoveredUids = playersSnap.docs.map((d) => d.id);
 
-  if (gameData.status !== 'PLAYING' || gameData.turnUid !== botUid) return;
+  await runTransaction(db, async (tx) => {
+    // 1. ALL READS FIRST
+    const gameSnap = await tx.get(gameRef);
+    if (!gameSnap.exists()) return;
+    const gameData = gameSnap.data() as GameState;
 
-  const botSnap = await getDoc(botRef);
-  if (!botSnap.exists()) return;
-  const botData = botSnap.data() as GamePlayerState;
+    if (gameData.status !== 'PLAYING' || gameData.turnUid !== botUid) return;
 
-  // 1. Draw card if bot hasn't drawn
-  if (!gameData.hasDrawn) {
-    const drawSource = gameData.openDeck && gameData.openDeck.length > 0 && Math.random() < 0.25 ? 'open' : 'closed';
-    try {
-      await drawCard(gameId, botUid, drawSource);
-    } catch {
-      await drawCard(gameId, botUid, 'closed');
+    const botSnap = await tx.get(botRef);
+    if (!botSnap.exists()) return;
+    const botData = botSnap.data() as GamePlayerState;
+
+    const deckSnap = await tx.get(secretDeckRef);
+
+    // Read other players to determine next player after bot
+    const allPlayerUids = Array.from(new Set([
+      ...(gameData.playerUids || []),
+      ...discoveredUids,
+      botUid,
+    ]));
+
+    const playerDocs: GamePlayerState[] = [];
+    for (const pUid of allPlayerUids) {
+      if (pUid === botUid) {
+        playerDocs.push(botData);
+      } else {
+        const pRef = doc(db, 'games', gameId, 'players', pUid);
+        const pSnap = await tx.get(pRef);
+        if (pSnap.exists()) {
+          playerDocs.push(pSnap.data() as GamePlayerState);
+        }
+      }
     }
-  }
 
-  // Brief thinking pause
-  await new Promise((r) => setTimeout(r, 800));
+    // 2. BOT DRAWS CARD
+    let closedDeck: Card[] = [];
+    if (deckSnap && deckSnap.exists()) {
+      const deckData = deckSnap.data() as { closedDeck: Card[] };
+      closedDeck = [...(deckData.closedDeck || [])];
+    }
+    if (closedDeck.length === 0) {
+      closedDeck = shuffleDeck(create108Deck());
+    }
 
-  // 2. Fetch updated bot cards and discard
-  const updatedBotSnap = await getDoc(botRef);
-  if (!updatedBotSnap.exists()) return;
-  const cards = updatedBotSnap.data().cards as Card[];
-  if (!cards || cards.length === 0) return;
+    let newOpenDeck = [...(gameData.openDeck || [])];
+    let drawnCard: Card;
+    if (newOpenDeck.length > 0 && Math.random() < 0.2) {
+      drawnCard = newOpenDeck.pop()!;
+    } else {
+      drawnCard = closedDeck.pop() || shuffleDeck(create108Deck()).pop()!;
+    }
 
-  const wildJokerRank = gameData.wildJoker?.rank;
-  const nonJokers = cards.filter((c) => !c.isPrintedJoker && c.rank !== 'JOKER' && c.rank !== wildJokerRank);
-  const cardToDiscard = nonJokers.length > 0 ? nonJokers[Math.floor(Math.random() * nonJokers.length)] : cards[0];
+    // Bot Hand
+    let botHand = [...(botData.cards || [])];
+    if (botHand.length === 0) {
+      for (let i = 0; i < 13; i++) {
+        botHand.push(closedDeck.pop() || shuffleDeck(create108Deck()).pop()!);
+      }
+    }
+    botHand.push(drawnCard);
 
-  try {
-    await discardCard(gameId, botUid, cardToDiscard);
-  } catch (e) {
-    console.warn('Bot discard:', e);
-  }
+    // 3. BOT DISCARDS CARD
+    const wildJokerRank = gameData.wildJoker?.rank;
+    const nonJokers = botHand.filter(
+      (c) => !c.isPrintedJoker && c.rank !== 'JOKER' && c.rank !== wildJokerRank
+    );
+    const cardToDiscard = nonJokers.length > 0
+      ? nonJokers[Math.floor(Math.random() * nonJokers.length)]
+      : botHand[0];
+
+    const discardIdx = botHand.findIndex((c) => c.id === cardToDiscard.id);
+    if (discardIdx >= 0) {
+      botHand.splice(discardIdx, 1);
+    } else {
+      botHand.pop();
+    }
+    newOpenDeck.push(cardToDiscard);
+
+    // 4. NEXT PLAYER
+    const otherActivePlayers = playerDocs
+      .filter((p) => p.uid !== botUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
+
+    let nextPlayerUid = botUid;
+    if (otherActivePlayers.length > 0) {
+      const botSeat = botData.seatIndex || 0;
+      const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > botSeat);
+      nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
+    }
+
+    const now = Date.now();
+
+    // 5. ATOMIC WRITES
+    tx.set(secretDeckRef, { closedDeck }, { merge: true });
+    tx.update(botRef, {
+      cards: botHand,
+      cardCount: botHand.length,
+      status: 'playing',
+    });
+    tx.update(gameRef, {
+      openDeck: newOpenDeck,
+      closedDeckCount: closedDeck.length,
+      turnUid: nextPlayerUid,
+      turnStartedAt: now,
+      turnDeadline: now + 60000,
+      turnExtensionCount: 0,
+      hasDrawn: false,
+      updatedAt: new Date().toISOString(),
+    });
+  });
 }
 
 /**
@@ -1246,8 +1346,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
   const playerRef = doc(db, 'games', gameId, 'players', currentTurnUid);
   const playersRef = collection(db, 'games', gameId, 'players');
 
-  const pSnap = await getDocs(playersRef);
-  const allPlayers = pSnap.docs.map((d) => d.data() as GamePlayerState);
+  const playersSnap = await getDocs(playersRef);
+  const discoveredUids = playersSnap.docs.map((d) => d.id);
 
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
@@ -1256,6 +1356,21 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
     const game = gameSnap.data() as GameState;
 
     if (game.status !== 'PLAYING' || game.turnUid !== currentTurnUid) return;
+
+    // Read all players inside transaction
+    const allPlayerUids = Array.from(new Set([
+      ...(game.playerUids || []),
+      ...discoveredUids,
+    ]));
+
+    const allPlayers: GamePlayerState[] = [];
+    for (const pUid of allPlayerUids) {
+      const pRef = doc(db, 'games', gameId, 'players', pUid);
+      const pSnap = await tx.get(pRef);
+      if (pSnap.exists()) {
+        allPlayers.push(pSnap.data() as GamePlayerState);
+      }
+    }
 
     const extCount = game.turnExtensionCount || 0;
     const now = Date.now();
@@ -1277,8 +1392,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 
       // Pass turn to next player
       const remainingActive = allPlayers
-        .filter((p) => p.uid !== currentTurnUid && p.status === 'playing')
-        .sort((a, b) => a.seatIndex - b.seatIndex);
+        .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+        .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
       if (remainingActive.length <= 1) {
         // Last player remaining wins!
@@ -1315,7 +1430,7 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
   const playersRef = collection(db, 'games', gameId, 'players');
 
   const pSnap = await getDocs(playersRef);
-  const allPlayers = pSnap.docs.map((d) => d.data() as GamePlayerState);
+  const discoveredUids = pSnap.docs.map((d) => d.id);
 
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
@@ -1325,6 +1440,21 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
 
     const playerSnap = await tx.get(playerRef);
     if (!playerSnap.exists()) return;
+
+    // Read all players inside transaction
+    const allPlayerUids = Array.from(new Set([
+      ...(game.playerUids || []),
+      ...discoveredUids,
+    ]));
+
+    const allPlayers: GamePlayerState[] = [];
+    for (const pUid of allPlayerUids) {
+      const pRef = doc(db, 'games', gameId, 'players', pUid);
+      const pSnap = await tx.get(pRef);
+      if (pSnap.exists()) {
+        allPlayers.push(pSnap.data() as GamePlayerState);
+      }
+    }
 
     // Penalty: First Drop = 20 pts, Middle Drop = 40 pts
     const penalty = game.openDeck.length <= 1 ? 20 : 40;
@@ -1337,8 +1467,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
     });
 
     const remainingActive = allPlayers
-      .filter((p) => p.uid !== playerUid && p.status === 'playing')
-      .sort((a, b) => a.seatIndex - b.seatIndex);
+      .filter((p) => p.uid !== playerUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
     if (remainingActive.length <= 1) {
       const winner = remainingActive[0];
