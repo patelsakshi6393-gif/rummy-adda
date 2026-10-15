@@ -104,10 +104,10 @@ export default function AdminPanelPage() {
         processedAt: now,
       });
 
-      const fee = w.platformFee ?? Math.round(w.amount * 0.20);
-      const net = w.netPayableAmount ?? Math.max(0, w.amount - fee);
+      const fee = w.platformFee ?? 0;
+      const net = w.netPayableAmount ?? w.amount;
       setFeedbackMsg({
-        text: `Withdrawal ${w.withdrawalId} marked as PAID. Dene Wala Balance: ₹${net.toLocaleString('en-IN')} (Gross: ₹${w.amount}, 20% Fee: -₹${fee}).`,
+        text: `Withdrawal ${w.withdrawalId} marked as PAID. Dene Wala Balance: ₹${net.toLocaleString('en-IN')} (Gross: ₹${w.amount}, Fee: ₹${fee}).`,
         type: 'success',
       });
     } catch (err: unknown) {
@@ -524,7 +524,7 @@ export default function AdminPanelPage() {
                       <thead className="bg-[#171827] text-slate-400 uppercase text-[10px] tracking-wider border-b border-white/10">
                         <tr>
                           <th className="py-3 px-4">Player / User</th>
-                          <th className="py-3 px-4">Amount & Dene Wala Balance (20% Fee)</th>
+                          <th className="py-3 px-4">Amount & Dene Wala Balance (0% Fee)</th>
                           <th className="py-3 px-4">Method & Destination</th>
                           <th className="py-3 px-4">Status</th>
                           <th className="py-3 px-4">Date</th>
@@ -533,8 +533,8 @@ export default function AdminPanelPage() {
                       </thead>
                       <tbody className="divide-y divide-white/5">
                         {withdrawals.map((w) => {
-                          const fee = w.platformFee ?? Math.round(w.amount * 0.20);
-                          const net = w.netPayableAmount ?? Math.max(0, w.amount - fee);
+                          const fee = w.platformFee ?? 0;
+                          const net = w.netPayableAmount ?? w.amount;
 
                           return (
                             <tr key={w.withdrawalId} className="hover:bg-white/[0.02] transition-colors">
@@ -551,7 +551,7 @@ export default function AdminPanelPage() {
                                     </span>
                                   </div>
                                   <div className="text-[10px] text-slate-400 font-mono">
-                                    Gross: ₹{w.amount.toLocaleString('en-IN')} | Fee (20%): -₹{fee.toLocaleString('en-IN')}
+                                    Gross: ₹{w.amount.toLocaleString('en-IN')} | Fee: ₹{fee.toLocaleString('en-IN')}
                                   </div>
                                 </div>
                               </td>

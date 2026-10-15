@@ -91,9 +91,9 @@ export default function WithdrawPage() {
       return;
     }
 
-    const feePercent = 20;
-    const platformFee = Math.round(numAmount * (feePercent / 100));
-    const netPayable = Math.max(0, numAmount - platformFee);
+    const feePercent = 0;
+    const platformFee = 0;
+    const netPayable = numAmount;
 
     let maskedDest = '';
     let rawDest = '';
@@ -168,7 +168,7 @@ export default function WithdrawPage() {
           amount: numAmount,
           currency: 'INR',
           status: 'pending',
-          description: `Withdrawal of ₹${numAmount} (20% Fee: -₹${platformFee}, Dene Wala Balance: ₹${netPayable}) to ${method.toUpperCase()} (${maskedDest})`,
+          description: `Withdrawal of ₹${numAmount} (0% Fee, Net: ₹${netPayable}) to ${method.toUpperCase()} (${maskedDest})`,
           referenceId: withdrawalId,
           createdAt: now,
         };
@@ -450,15 +450,15 @@ export default function WithdrawPage() {
               </div>
             )}
 
-            {/* Live 20% Platform Fee & Dene Wala Balance Calculation */}
+            {/* Live 0% Withdrawal Fee & Dene Wala Balance Calculation */}
             <div className="p-4 sm:p-5 rounded-2xl bg-[#090a12] border border-amber-500/30 space-y-3">
               <div className="flex items-center justify-between text-xs pb-2 border-b border-white/5">
                 <span className="font-bold text-slate-200 flex items-center gap-1.5">
-                  <Percent className="w-3.5 h-3.5 text-amber-400" />
-                  Cashout Settlement Breakdown (20% Platform Fee)
+                  <Percent className="w-3.5 h-3.5 text-emerald-400" />
+                  Cashout Settlement Breakdown (0% Withdrawal Fee)
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
-                  20% Commission
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  0% Fee (Free Cashout)
                 </span>
               </div>
 
@@ -467,25 +467,23 @@ export default function WithdrawPage() {
                   <span>Requested Cashout Amount:</span>
                   <span className="font-mono font-bold text-white">₹{(parseInt(amount, 10) || 0).toLocaleString('en-IN')}</span>
                 </div>
-                <div className="flex items-center justify-between text-rose-300">
-                  <span>Platform Fee (20% Commission):</span>
-                  <span className="font-mono font-bold text-rose-400">
-                    -₹{(Math.round((parseInt(amount, 10) || 0) * 0.20)).toLocaleString('en-IN')}
-                  </span>
+                <div className="flex items-center justify-between text-emerald-400">
+                  <span>Withdrawal Platform Fee (0%):</span>
+                  <span className="font-mono font-bold text-emerald-400">₹0 (Free)</span>
                 </div>
                 <div className="pt-2 border-t border-white/10 flex items-center justify-between">
                   <div>
                     <span className="font-black text-emerald-400 text-sm block">Dene Wala Balance (Aapko Milne Wali Rashi):</span>
-                    <span className="text-[10px] text-slate-400">Net payout transferred to your {method === 'upi' ? 'UPI' : 'Bank'} after 20% fee</span>
+                    <span className="text-[10px] text-slate-400">100% full payout transferred to your {method === 'upi' ? 'UPI' : 'Bank'} with zero withdrawal deduction</span>
                   </div>
                   <span className="text-xl sm:text-2xl font-black text-emerald-400 font-mono">
-                    ₹{(Math.max(0, (parseInt(amount, 10) || 0) - Math.round((parseInt(amount, 10) || 0) * 0.20))).toLocaleString('en-IN')}
+                    ₹{(parseInt(amount, 10) || 0).toLocaleString('en-IN')}
                   </span>
                 </div>
               </div>
 
               <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 leading-relaxed">
-                💡 <strong>Important:</strong> Game jeetne par koi katauti nahi hoti (0% table rake). 20% platform commission sirf withdrawal ke time lagta hai, aur dene wala balance (net ₹{(Math.max(0, (parseInt(amount, 10) || 0) - Math.round((parseInt(amount, 10) || 0) * 0.20))).toLocaleString('en-IN')}) aapko bheja jata hai.
+                💡 <strong>Important:</strong> विड्रॉल के समय ₹0 कटता है (0% Fee)। 14% प्लेटफॉर्म फीस केवल मैच जीतते समय ऑटोमेटिक कटती है, इसलिए आपका पूरा विथड्रॉल अमाउंट (₹{(parseInt(amount, 10) || 0).toLocaleString('en-IN')}) आपके खाते में भेजा जाएगा।
               </div>
             </div>
 
@@ -510,12 +508,12 @@ export default function WithdrawPage() {
             <div className="bg-[#12131e] border border-white/10 rounded-2xl p-6 shadow-xl space-y-4">
               <h3 className="text-base font-bold text-white border-b border-white/5 pb-3 flex items-center justify-between">
                 <span>Your Withdrawal Requests</span>
-                <span className="text-xs text-slate-400 font-normal">20% Fee applied at cashout</span>
+                <span className="text-xs text-slate-400 font-normal">0% Fee applied at cashout</span>
               </h3>
               <div className="divide-y divide-white/5 text-xs">
                 {withdrawals.map((w) => {
-                  const fee = w.platformFee ?? Math.round(w.amount * 0.20);
-                  const net = w.netPayableAmount ?? Math.max(0, w.amount - fee);
+                  const fee = w.platformFee ?? 0;
+                  const net = w.netPayableAmount ?? w.amount;
                   const shortId = getShortPlayerId(w.playerId);
                   const waMsg = `*RUMMY ADDA - WITHDRAWAL STATUS*\nPlayer: ${profile?.displayName || 'Player'} (#${shortId})\nWithdraw: ₹${w.amount} | Net: ₹${net}\nDestination: ${w.maskedDestination}\n\nHello, कृपया मेरे विड्रॉल स्टेटस की जानकारी दें।`;
                   const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(waMsg)}`;
@@ -547,7 +545,7 @@ export default function WithdrawPage() {
                             ₹{net.toLocaleString('en-IN')}
                           </p>
                           <span className="text-[10px] text-slate-500 block">
-                            Gross: ₹{w.amount} | Fee (20%): -₹{fee}
+                            Gross: ₹{w.amount} | Fee: ₹{fee}
                           </span>
                         </div>
 

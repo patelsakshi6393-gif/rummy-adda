@@ -41,11 +41,11 @@ function validateWithdrawal(amount: number, wallet: UserWallet): { isValid: bool
   return { isValid: true };
 }
 
-// 3. 20/80 CALCULATION
+// 3. 14% PLATFORM FEE CALCULATION
 function calculateGamePayout(totalPointsLost: number, pointValue: number): { grossWin: number; adminShare: number; playerNetShare: number } {
   const grossWin = totalPointsLost * pointValue;
-  const adminShare = Math.round(grossWin * 0.20 * 100) / 100; // 20% platform rake
-  const playerNetShare = Math.round((grossWin - adminShare) * 100) / 100; // 80% player net
+  const adminShare = Math.round(grossWin * 0.14 * 100) / 100; // 14% platform fee
+  const playerNetShare = Math.round((grossWin - adminShare) * 100) / 100; // 86% player net
   return { grossWin, adminShare, playerNetShare };
 }
 
@@ -245,19 +245,19 @@ async function runAuditTests() {
     `Attempt to withdraw ₹200 when winBalance is ₹150 was rejected. Starter (₹20) and Deposit (₹500) are non-withdrawable.`
   );
 
-  // 3. 20/80 CALCULATION
+  // 3. 14% PLATFORM FEE CALCULATION
   const payout100 = calculateGamePayout(100, 1.0); // 100 gross win
   assert(
-    '₹100 gross win calculates ₹20 admin share and ₹80 player net share',
-    payout100.grossWin === 100 && payout100.adminShare === 20 && payout100.playerNetShare === 80,
-    `Gross win ₹100 -> adminShare: ₹${payout100.adminShare} (20%), playerNetShare: ₹${payout100.playerNetShare} (80%).`
+    '₹100 gross win calculates ₹14 admin share and ₹86 player net share',
+    payout100.grossWin === 100 && payout100.adminShare === 14 && payout100.playerNetShare === 86,
+    `Gross win ₹100 -> adminShare: ₹${payout100.adminShare} (14%), playerNetShare: ₹${payout100.playerNetShare} (86%).`
   );
 
   const payout500 = calculateGamePayout(50, 10.0); // 500 gross win
   assert(
-    '₹500 gross win calculates ₹100 admin share and ₹400 player net share',
-    payout500.grossWin === 500 && payout500.adminShare === 100 && payout500.playerNetShare === 400,
-    `Gross win ₹500 -> adminShare: ₹${payout500.adminShare} (20%), playerNetShare: ₹${payout500.playerNetShare} (80%).`
+    '₹500 gross win calculates ₹70 admin share and ₹430 player net share',
+    payout500.grossWin === 500 && payout500.adminShare === 70 && payout500.playerNetShare === 430,
+    `Gross win ₹500 -> adminShare: ₹${payout500.adminShare} (14%), playerNetShare: ₹${payout500.playerNetShare} (86%).`
   );
 
   // 4. DUPLICATE QUEUE REQUESTS

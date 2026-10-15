@@ -1341,6 +1341,45 @@ export async function playBotTurn(gameId: string, botUid: string): Promise<void>
 }
 
 /**
+ * Automatically deducts 14% platform fee and credits net winning amount directly to winner's wallet
+ * Policy: "14% platform fee will be automatically deducted from winning amount before crediting to winner"
+ */
+async function creditWinnerPayout(
+  gameId: string,
+  gameMode: string,
+  winnerUid: string,
+  grossWin: number,
+  platformFee: number,
+  playerNetShare: number
+): Promise<void> {
+  if (playerNetShare <= 0) return;
+  try {
+    const winnerWalletRef = doc(db, 'wallets', winnerUid);
+    const wSnap = await getDoc(winnerWalletRef);
+    if (wSnap.exists()) {
+      const curWin = wSnap.data().winBalance || 0;
+      await updateDoc(winnerWalletRef, {
+        winBalance: curWin + playerNetShare,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    const winTxRef = doc(collection(db, 'transactions'));
+    await setDoc(winTxRef, {
+      id: winTxRef.id,
+      uid: winnerUid,
+      type: 'game_win',
+      amount: playerNetShare,
+      status: 'completed',
+      description: `Winnings for ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (Gross: ₹${grossWin}, 14% Platform Fee: -₹${platformFee})`,
+      referenceId: gameId,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Error crediting winner wallet:', err);
+  }
+}
+
+/**
  * Handle turn timeout with 60s -> 5s -> 5s -> Auto Drop
  */
 export async function handleTurnTimeout(gameId: string, currentTurnUid: string): Promise<void> {
@@ -1351,13 +1390,13 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
   const playersSnap = await getDocs(playersRef);
   const discoveredUids = playersSnap.docs.map((d) => d.id);
 
-  await runTransaction(db, async (tx) => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
-    if (!gameSnap.exists()) return;
+    if (!gameSnap.exists()) return null;
     const game = gameSnap.data() as GameState;
 
-    if (game.status !== 'PLAYING' || game.turnUid !== currentTurnUid) return;
+    if (game.status !== 'PLAYING' || game.turnUid !== currentTurnUid) return null;
 
     // Read all players inside transaction
     const allPlayerUids = Array.from(new Set([
@@ -1385,6 +1424,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
         turnExtensionCount: extCount + 1,
         updatedAt: new Date().toISOString(),
       });
+      return null;
     } else {
       // Auto-drop the player!
       tx.update(playerRef, {
@@ -1401,13 +1441,55 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
         // Last player remaining wins!
         const winner = remainingActive[0];
         if (winner) {
+          const scores: Record<string, number> = {};
+          const penalties: Record<string, string> = {};
+          const payouts: Record<string, number> = {};
+          let totalPointsLost = 0;
+
+          for (const p of allPlayers) {
+            if (p.uid === winner.uid) {
+              scores[p.uid] = 0;
+              penalties[p.uid] = 'Winner';
+            } else {
+              const dropPts = p.uid === currentTurnUid ? 40 : (p.score || 40);
+              scores[p.uid] = dropPts;
+              penalties[p.uid] = `Dropped (${dropPts} pts)`;
+              totalPointsLost += dropPts;
+            }
+          }
+
+          let grossWin = totalPointsLost * (game.pointValue || 1);
+          if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
+            grossWin = (game.entryFee || 0) * allPlayers.length;
+          }
+          const feePercent = 14;
+          const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
+          const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+          payouts[winner.uid] = playerNetShare;
+
           tx.update(gameRef, {
             status: 'RESULT',
             phase: 'RESULT',
             winnerUid: winner.uid,
+            resultData: {
+              winnerUid: winner.uid,
+              scores,
+              penalties,
+              grossWin,
+              platformFee,
+              feePercent,
+              adminShare: platformFee,
+              playerNetShare,
+              payouts,
+              settlementStatus: 'completed',
+              completedAt: new Date().toISOString(),
+            },
             updatedAt: new Date().toISOString(),
           });
+
+          return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode };
         }
+        return null;
       } else {
         const nextUid = remainingActive[0].uid;
         tx.update(gameRef, {
@@ -1418,9 +1500,21 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
           hasDrawn: false,
           updatedAt: new Date().toISOString(),
         });
+        return null;
       }
     }
   });
+
+  if (winnerToCredit) {
+    await creditWinnerPayout(
+      gameId,
+      winnerToCredit.gameMode,
+      winnerToCredit.winnerUid,
+      winnerToCredit.grossWin,
+      winnerToCredit.platformFee,
+      winnerToCredit.playerNetShare
+    );
+  }
 }
 
 /**
@@ -1434,14 +1528,14 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
   const pSnap = await getDocs(playersRef);
   const discoveredUids = pSnap.docs.map((d) => d.id);
 
-  await runTransaction(db, async (tx) => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
-    if (!gameSnap.exists()) return;
+    if (!gameSnap.exists()) return null;
     const game = gameSnap.data() as GameState;
 
     const playerSnap = await tx.get(playerRef);
-    if (!playerSnap.exists()) return;
+    if (!playerSnap.exists()) return null;
 
     // Read all players inside transaction
     const allPlayerUids = Array.from(new Set([
@@ -1475,13 +1569,55 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
     if (remainingActive.length <= 1) {
       const winner = remainingActive[0];
       if (winner) {
+        const scores: Record<string, number> = {};
+        const penalties: Record<string, string> = {};
+        const payouts: Record<string, number> = {};
+        let totalPointsLost = 0;
+
+        for (const p of allPlayers) {
+          if (p.uid === winner.uid) {
+            scores[p.uid] = 0;
+            penalties[p.uid] = 'Winner';
+          } else {
+            const dropPts = p.uid === playerUid ? penalty : (p.score || penalty);
+            scores[p.uid] = dropPts;
+            penalties[p.uid] = `Dropped (${dropPts} pts)`;
+            totalPointsLost += dropPts;
+          }
+        }
+
+        let grossWin = totalPointsLost * (game.pointValue || 1);
+        if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
+          grossWin = (game.entryFee || 0) * allPlayers.length;
+        }
+        const feePercent = 14;
+        const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
+        const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+        payouts[winner.uid] = playerNetShare;
+
         tx.update(gameRef, {
           status: 'RESULT',
           phase: 'RESULT',
           winnerUid: winner.uid,
+          resultData: {
+            winnerUid: winner.uid,
+            scores,
+            penalties,
+            grossWin,
+            platformFee,
+            feePercent,
+            adminShare: platformFee,
+            playerNetShare,
+            payouts,
+            settlementStatus: 'completed',
+            completedAt: new Date().toISOString(),
+          },
           updatedAt: new Date().toISOString(),
         });
+
+        return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode };
       }
+      return null;
     } else if (game.turnUid === playerUid) {
       const nextUid = remainingActive[0].uid;
       const now = Date.now();
@@ -1493,8 +1629,21 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
         hasDrawn: false,
         updatedAt: new Date().toISOString(),
       });
+      return null;
     }
+    return null;
   });
+
+  if (winnerToCredit) {
+    await creditWinnerPayout(
+      gameId,
+      winnerToCredit.gameMode,
+      winnerToCredit.winnerUid,
+      winnerToCredit.grossWin,
+      winnerToCredit.platformFee,
+      winnerToCredit.playerNetShare
+    );
+  }
 }
 
 /**
@@ -1545,11 +1694,17 @@ export async function declareHand(
     }
 
     // Gross winnings calculation
-    const grossWin = totalPointsLost * game.pointValue;
-    // No commission deducted at match table ("yha pr nhi katenge - withdrawal mai platform fee lagegi")
-    const adminShare = 0;
-    // Exactly 100% gross winnings credited to winner wallet
-    const playerNetShare = grossWin;
+    let grossWin = totalPointsLost * (game.pointValue || 1);
+    if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
+      grossWin = (game.entryFee || 0) * allPlayers.length;
+    }
+
+    // 14% platform fee automatically deducted from winnings
+    // "जो प्लेयर विन करेगा, उसमें प्लेटफॉर्म उसी में होगा 14% प्ले ऑटोमेटिक कट जाएगा... पहले उसका 14% कट जाएगा उसके बाद ही उसको विन मिलेगी"
+    const feePercent = 14;
+    const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
+    const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+    const adminShare = platformFee;
     payouts[playerUid] = playerNetShare;
 
     await updateDoc(gameRef, {
@@ -1561,10 +1716,12 @@ export async function declareHand(
         scores,
         penalties,
         grossWin,
+        platformFee,
+        feePercent,
         adminShare,
         playerNetShare,
         payouts,
-        settlementStatus: 'pending_server_verification',
+        settlementStatus: 'completed',
         completedAt: new Date().toISOString(),
       },
       updatedAt: new Date().toISOString(),
@@ -1575,32 +1732,16 @@ export async function declareHand(
       score: 0,
     });
 
-    // Credit winner's wallet winBalance directly
+    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings
     if (playerNetShare > 0) {
-      try {
-        const winnerWalletRef = doc(db, 'wallets', playerUid);
-        const wSnap = await getDoc(winnerWalletRef);
-        if (wSnap.exists()) {
-          const curWin = wSnap.data().winBalance || 0;
-          await updateDoc(winnerWalletRef, {
-            winBalance: curWin + playerNetShare,
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        const winTxRef = doc(collection(db, 'transactions'));
-        await setDoc(winTxRef, {
-          id: winTxRef.id,
-          uid: playerUid,
-          type: 'game_win',
-          amount: playerNetShare,
-          status: 'completed',
-          description: `Winnings for ${game.mode.toUpperCase()} match #${gameId.slice(-6)}`,
-          referenceId: gameId,
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error('Error crediting winner wallet:', err);
-      }
+      await creditWinnerPayout(
+        gameId,
+        game.mode,
+        playerUid,
+        grossWin,
+        platformFee,
+        playerNetShare
+      );
     }
 
     return validation;

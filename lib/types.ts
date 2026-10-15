@@ -85,9 +85,9 @@ export interface WithdrawalRequest {
   playerId: string;
   playerName?: string;
   amount: number; // Requested gross withdrawal
-  feePercent?: number; // Platform fee percentage (20%)
-  platformFee?: number; // 20% platform commission amount
-  netPayableAmount?: number; // "Dene wala balance" (amount - platformFee)
+  feePercent?: number; // Withdrawal fee percentage (0% - no fee at withdrawal)
+  platformFee?: number; // 0% platform fee on cashout
+  netPayableAmount?: number; // "Dene wala balance" (100% payout, no fee at withdrawal)
   method: 'upi' | 'bank';
   maskedDestination: string;
   rawDestination?: string;
@@ -163,6 +163,12 @@ export interface GameState {
     scores: Record<string, number>;
     penalties: Record<string, string>;
     payouts: Record<string, number>;
+    grossWin?: number;
+    platformFee?: number; // 14% platform fee automatically deducted from winnings
+    feePercent?: number; // 14%
+    playerNetShare?: number; // Net winnings credited to winner wallet
+    adminShare?: number;
+    settlementStatus?: string;
     completedAt: string;
   };
   createdAt: string;

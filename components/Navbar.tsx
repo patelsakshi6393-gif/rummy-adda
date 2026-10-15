@@ -21,7 +21,6 @@ import {
   Share2,
   Gift,
   BarChart2,
-  Download,
 } from 'lucide-react';
 
 export function Navbar() {
@@ -95,16 +94,6 @@ export function Navbar() {
 
           {/* Right Header Section */}
           <div className="hidden md:flex items-center gap-2 lg:gap-4">
-            {/* Android App Button */}
-            <NextLink
-              href="/?splash=true"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-md shadow-amber-500/20 transition-transform hover:scale-105"
-              title="Download Android APK"
-            >
-              <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>Android App</span>
-            </NextLink>
-
             {user ? (
               <>
                 {/* Wallet Badge & Quick Add Cash */}
@@ -271,15 +260,6 @@ export function Navbar() {
 
           {/* Mobile Hamburger Button */}
           <div className="flex md:hidden items-center gap-2">
-            <NextLink
-              href="/?splash=true"
-              className="flex items-center gap-1 bg-[#f5ad18] text-slate-950 font-black text-[11px] px-2.5 py-1.5 rounded-lg shadow-sm"
-              title="Download Android APK"
-            >
-              <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>APK</span>
-            </NextLink>
-
             {user && (
               <NextLink
                 href="/wallet/deposit"
@@ -371,14 +351,6 @@ export function Navbar() {
             </>
           ) : (
             <div className="flex flex-col gap-2 pt-2">
-              <NextLink
-                href="/?splash=true"
-                onClick={() => setMenuOpen(false)}
-                className="w-full text-center py-2.5 rounded-xl bg-[#f5ad18] text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-md"
-              >
-                <Download className="w-4 h-4 stroke-[2.5]" />
-                <span>Download Android App (APK)</span>
-              </NextLink>
               <NextLink
                 href="/how-to-play"
                 onClick={() => setMenuOpen(false)}

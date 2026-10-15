@@ -49,7 +49,7 @@ export default function WithdrawalHistoryPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <h1 className="text-2xl font-black text-white">Withdrawal History</h1>
-              <p className="text-xs text-slate-400 mt-0.5">20% Platform fee applies at cashout settlement</p>
+              <p className="text-xs text-slate-400 mt-0.5">0% Withdrawal Fee (100% full payout transferred)</p>
             </div>
             <Link
               href="/wallet/withdraw"
@@ -66,9 +66,9 @@ export default function WithdrawalHistoryPage() {
             ) : (
               <div className="divide-y divide-white/5 text-xs">
                 {withdrawals.map((w) => {
-                  const fee = w.platformFee ?? Math.round(w.amount * 0.20);
-                  const net = w.netPayableAmount ?? Math.max(0, w.amount - fee);
-                  const waMsg = `*RUMMY ADDA - WITHDRAWAL STATUS ENQUIRY*\n• *Player ID:* ${w.playerId}\n• *Withdrawal Ref:* ${w.withdrawalId}\n• *Gross Amount:* ₹${w.amount}\n• *Platform Fee (20%):* -₹${fee}\n• *Dene Wala Balance (Net Payable):* ₹${net}\n• *Destination:* ${w.maskedDestination}\n\nHello Support Team, please verify my withdrawal of ₹${net} (Dene Wala Balance).`;
+                  const fee = w.platformFee ?? 0;
+                  const net = w.netPayableAmount ?? w.amount;
+                  const waMsg = `*RUMMY ADDA - WITHDRAWAL STATUS ENQUIRY*\n• *Player ID:* ${w.playerId}\n• *Withdrawal Ref:* ${w.withdrawalId}\n• *Gross Amount:* ₹${w.amount}\n• *Platform Fee:* ₹${fee}\n• *Dene Wala Balance (Net Payable):* ₹${net}\n• *Destination:* ${w.maskedDestination}\n\nHello Support Team, please verify my withdrawal of ₹${net} (Dene Wala Balance).`;
                   const waUrl = `https://wa.me/${OFFICIAL_WHATSAPP_NUMBER}?text=${encodeURIComponent(waMsg)}`;
 
                   return (
@@ -98,7 +98,7 @@ export default function WithdrawalHistoryPage() {
                             ₹{net.toLocaleString('en-IN')}
                           </p>
                           <span className="text-[10px] text-slate-500 block font-mono">
-                            Gross: ₹{w.amount} | 20% Fee: -₹{fee}
+                            Gross: ₹{w.amount} | Fee: ₹{fee}
                           </span>
                         </div>
                         <a

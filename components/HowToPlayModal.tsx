@@ -693,14 +693,14 @@ export function HowToPlayModal({ isOpen, onClose, defaultTab = 'basics' }: HowTo
                     <p className="text-[11px] text-slate-400">आपकी लगाई हुई एंट्री फीस पूरी तरह से सुरक्षित रहती है।</p>
                   </div>
                   <div className="p-3.5 bg-black/40 rounded-xl border border-white/10 space-y-1">
-                    <span className="text-slate-400 block font-bold">2. 100% Table Win Credit</span>
-                    <span className="text-amber-400 font-black text-sm block">0% Table Cut</span>
-                    <p className="text-[11px] text-slate-400">हारने वाले के पेनल्टी पॉइंट्स की पूरी कीमत (बिना किसी टेबल कट के) आपके वॉलेट में जुड़ती है।</p>
+                    <span className="text-slate-400 block font-bold">2. 14% Fee on Win</span>
+                    <span className="text-amber-400 font-black text-sm block">14% ऑटोमेटिक कट</span>
+                    <p className="text-[11px] text-slate-400">मैच जीतते ही कुल विनिंग राशि में से 14% प्लेटफॉर्म फीस कटकर नेट विनिंग आपके वॉलेट में जुड़ती है।</p>
                   </div>
                   <div className="p-3.5 bg-black/40 rounded-xl border border-white/10 space-y-1">
-                    <span className="text-slate-400 block font-bold">3. 20% Fee at Withdrawal</span>
-                    <span className="text-teal-400 font-black text-sm block">Dene Wala Balance</span>
-                    <p className="text-[11px] text-slate-400">20% कमीशन केवल विथड्रॉ करते वक्त लगता है और प्रीफिल्ड मैसेज में आपका Dene Wala Balance लिखा होता है।</p>
+                    <span className="text-slate-400 block font-bold">3. 0% Fee at Withdrawal</span>
+                    <span className="text-teal-400 font-black text-sm block">100% फ्री विथड्रॉल</span>
+                    <p className="text-[11px] text-slate-400">विथड्रॉल के समय कोई फीस नहीं कटती (0% Fee) — आपका पूरा विथड्रॉल अमाउंट आपके बैंक/UPI में ट्रांसफर होता है।</p>
                   </div>
                 </div>
               </div>

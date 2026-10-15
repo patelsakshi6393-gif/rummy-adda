@@ -62,9 +62,9 @@ function WithdrawConfirmationContent() {
 
   const withdrawalId = dbData?.withdrawalId || paramWithdrawalId || 'w_pending';
   const grossAmount = dbData?.amount ?? (paramAmount ? parseInt(paramAmount, 10) : 100);
-  const feePercent = dbData?.feePercent ?? 20;
-  const platformFee = dbData?.platformFee ?? (paramFee ? parseInt(paramFee, 10) : Math.round(grossAmount * 0.20));
-  const netPayable = dbData?.netPayableAmount ?? (paramNet ? parseInt(paramNet, 10) : Math.max(0, grossAmount - platformFee));
+  const feePercent = dbData?.feePercent ?? 0;
+  const platformFee = dbData?.platformFee ?? (paramFee ? parseInt(paramFee, 10) : 0);
+  const netPayable = dbData?.netPayableAmount ?? (paramNet ? parseInt(paramNet, 10) : grossAmount);
   const method = dbData?.method || paramMethod;
   const destination = dbData?.rawDestination || dbData?.maskedDestination || paramDest || 'Registered Account';
 
@@ -87,7 +87,7 @@ function WithdrawConfirmationContent() {
 Player: ${userDisplayName} (#${shortId})
 Mobile: ${mobileNumber}
 Withdraw Amount: ₹${formattedGross}
-Platform Fee (${feePercent}%): -₹${formattedFee}
+Platform Fee (0%): ₹0
 Net Payable: ₹${formattedNet}
 UPI ID: ${destination}
 
@@ -96,7 +96,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
 Player: ${userDisplayName} (#${shortId})
 Mobile: ${mobileNumber}
 Withdraw Amount: ₹${formattedGross}
-Platform Fee (${feePercent}%): -₹${formattedFee}
+Platform Fee (0%): ₹0
 Net Payable: ₹${formattedNet}
 Bank Details: ${bankDetailsText}
 
@@ -125,7 +125,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
           Withdrawal Request Queued
         </h1>
         <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-lg mx-auto">
-          Aapka cashout request create ho gaya hai. 20% platform fee deduct hone ke baad aapka dene wala balance niche calculate kiya gaya hai.
+          Aapka cashout request create ho gaya hai. 0% withdrawal fee ke sath aapka pura balance transfer ke liye queued hai.
         </p>
       </div>
 
@@ -148,19 +148,19 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
           </div>
         </div>
 
-        {/* 20% Commission Breakdown Table */}
+        {/* 0% Fee Breakdown Table */}
         <div className="bg-[#090a12] p-4 rounded-2xl border border-white/5 space-y-2.5 text-xs">
           <div className="flex items-center justify-between text-slate-300">
             <span>Requested Withdrawal Amount:</span>
             <span className="font-mono font-bold text-white">₹{formattedGross}</span>
           </div>
 
-          <div className="flex items-center justify-between text-rose-300">
+          <div className="flex items-center justify-between text-emerald-400">
             <span className="flex items-center gap-1.5">
-              <Percent className="w-3.5 h-3.5 text-rose-400" />
-              Platform Fee (20% Commission):
+              <Percent className="w-3.5 h-3.5 text-emerald-400" />
+              Withdrawal Platform Fee (0%):
             </span>
-            <span className="font-mono font-bold text-rose-400">-₹{formattedFee}</span>
+            <span className="font-mono font-bold text-emerald-400">₹0 (Free)</span>
           </div>
 
           <div className="pt-2 border-t border-white/10 flex items-center justify-between font-bold">
@@ -188,7 +188,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
         </div>
 
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 leading-relaxed">
-          💡 <strong>Policy Notice:</strong> Match jeetne par koi commission nahi kata gaya (100% win credit). Rules ke mutabiq 20% platform fee cashout ke dauran deduct hoti hai, aur ₹{formattedNet} aapke account mein transfer kiya jayega.
+          💡 <strong>Policy Notice:</strong> 14% प्लेटफॉर्म फीस गेम जीतने के समय ही कट चुकी है। विथड्रॉल के समय कोई फीस नहीं कटती (0% Fee) — आपका पूरा ₹{formattedNet} आपके अकाउंट में भेजा जाएगा।
         </div>
       </div>
 

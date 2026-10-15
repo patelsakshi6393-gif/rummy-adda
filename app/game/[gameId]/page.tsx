@@ -1076,6 +1076,27 @@ export default function GameRoomPage() {
                 })}
               </div>
 
+              {/* Winning Amount & 14% Platform Fee Breakdown */}
+              {game.resultData && (game.resultData.grossWin || 0) > 0 && (
+                <div className="bg-[#090a12] border border-amber-500/20 rounded-2xl p-4 text-xs space-y-2 text-left">
+                  <div className="flex items-center justify-between font-bold text-slate-300 pb-1.5 border-b border-white/5">
+                    <span>🏆 Total Winning Pot:</span>
+                    <span className="font-mono text-white">₹{game.resultData.grossWin?.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-rose-300">
+                    <span>Platform Fee (14% automatic cut):</span>
+                    <span className="font-mono font-bold text-rose-400">-₹{game.resultData.platformFee?.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1 border-t border-white/10">
+                    <span>Net Winning Amount Credited:</span>
+                    <span className="font-mono text-sm font-black">₹{game.resultData.playerNetShare?.toLocaleString('en-IN')}</span>
+                  </div>
+                  <p className="text-[10px] text-amber-300/90 pt-1">
+                    💡 14% प्लेटफॉर्म फीस कटने के बाद विनिंग राशि विजेता के Winnings वॉलेट में जमा हो गई है। विथड्रॉल के समय 0% फीस कटती है (पूरी राशि मिलेगी)!
+                  </p>
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="flex items-center justify-center gap-3 pt-2">
                 <Link
