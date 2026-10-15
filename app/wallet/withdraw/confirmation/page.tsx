@@ -25,7 +25,7 @@ import { db } from '@/lib/firebase';
 import { WithdrawalRequest } from '@/lib/types';
 import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
-const OFFICIAL_WHATSAPP_NUMBER = '917466990584';
+const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
 
 function WithdrawConfirmationContent() {
   const searchParams = useSearchParams();
@@ -234,7 +234,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
             </p>
           </div>
           <p className="text-[10px] text-slate-500 text-center mt-2">
-            Official Support Desk WhatsApp (+91 7466990584) will verify and process your ₹{formattedNet} payout.
+            Official Support Desk WhatsApp will verify and process your ₹{formattedNet} payout.
           </p>
         </div>
       </div>

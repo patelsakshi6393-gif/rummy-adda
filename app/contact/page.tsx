@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { collection, doc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
-const WHATSAPP_NUMBER = '917466990584';
+const WHATSAPP_NUMBER = '919277182389';
 
 export default function ContactPage() {
   const { user, profile } = useAuth();

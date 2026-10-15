@@ -27,7 +27,7 @@ import { db } from '@/lib/firebase';
 import { WithdrawalRequest, UserWallet, WalletTransaction } from '@/lib/types';
 import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
-const OFFICIAL_WHATSAPP_NUMBER = '917466990584';
+const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
 
 export default function WithdrawPage() {
   const router = useRouter();

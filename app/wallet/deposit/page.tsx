@@ -22,7 +22,7 @@ import { DepositRequest } from '@/lib/types';
 import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
 const PRESET_AMOUNTS = [100, 500, 1000, 2000, 5000, 10000];
-const OFFICIAL_WHATSAPP_NUMBER = '917466990584'; // +91 74669 90584
+const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
 
 export default function DepositPage() {
   const router = useRouter();
