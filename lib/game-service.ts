@@ -1350,7 +1350,8 @@ async function creditWinnerPayout(
   winnerUid: string,
   grossWin: number,
   platformFee: number,
-  playerNetShare: number
+  playerNetShare: number,
+  pointsWon: number = 0
 ): Promise<void> {
   if (playerNetShare <= 0) return;
   try {
@@ -1358,8 +1359,10 @@ async function creditWinnerPayout(
     const wSnap = await getDoc(winnerWalletRef);
     if (wSnap.exists()) {
       const curWin = wSnap.data().winBalance || 0;
+      const curRewardPoints = wSnap.data().rewardPoints || 0;
       await updateDoc(winnerWalletRef, {
         winBalance: curWin + playerNetShare,
+        rewardPoints: curRewardPoints + pointsWon,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1370,7 +1373,7 @@ async function creditWinnerPayout(
       type: 'game_win',
       amount: playerNetShare,
       status: 'completed',
-      description: `Winnings for ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (Gross: ₹${grossWin}, 14% Platform Fee: -₹${platformFee})`,
+      description: `Winnings for ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (+${pointsWon} Pts, Gross: ₹${grossWin}, 14% Platform Fee: -₹${platformFee})`,
       referenceId: gameId,
       createdAt: new Date().toISOString(),
     });
@@ -1390,7 +1393,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
   const playersSnap = await getDocs(playersRef);
   const discoveredUids = playersSnap.docs.map((d) => d.id);
 
-  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string } | null> => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string; pointsWon?: number } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
     if (!gameSnap.exists()) return null;
@@ -1448,7 +1451,6 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 
           for (const p of allPlayers) {
             if (p.uid === winner.uid) {
-              scores[p.uid] = 0;
               penalties[p.uid] = 'Winner';
             } else {
               const dropPts = p.uid === currentTurnUid ? 40 : (p.score || 40);
@@ -1457,11 +1459,11 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
               totalPointsLost += dropPts;
             }
           }
+          // Winner's score tracks points won from all opponents
+          scores[winner.uid] = totalPointsLost;
 
-          let grossWin = totalPointsLost * (game.pointValue || 1);
-          if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
-            grossWin = (game.entryFee || 0) * allPlayers.length;
-          }
+          const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
+          let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
           const feePercent = 14;
           const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
           const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
@@ -1487,7 +1489,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
             updatedAt: new Date().toISOString(),
           });
 
-          return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode };
+          return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode, pointsWon: totalPointsLost };
         }
         return null;
       } else {
@@ -1512,7 +1514,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
       winnerToCredit.winnerUid,
       winnerToCredit.grossWin,
       winnerToCredit.platformFee,
-      winnerToCredit.playerNetShare
+      winnerToCredit.playerNetShare,
+      winnerToCredit.pointsWon
     );
   }
 }
@@ -1528,7 +1531,7 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
   const pSnap = await getDocs(playersRef);
   const discoveredUids = pSnap.docs.map((d) => d.id);
 
-  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string } | null> => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string; pointsWon?: number } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
     if (!gameSnap.exists()) return null;
@@ -1576,7 +1579,6 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
 
         for (const p of allPlayers) {
           if (p.uid === winner.uid) {
-            scores[p.uid] = 0;
             penalties[p.uid] = 'Winner';
           } else {
             const dropPts = p.uid === playerUid ? penalty : (p.score || penalty);
@@ -1585,11 +1587,11 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
             totalPointsLost += dropPts;
           }
         }
+        // Winner's score tracks points won
+        scores[winner.uid] = totalPointsLost;
 
-        let grossWin = totalPointsLost * (game.pointValue || 1);
-        if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
-          grossWin = (game.entryFee || 0) * allPlayers.length;
-        }
+        const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
+        let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
         const feePercent = 14;
         const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
         const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
@@ -1615,7 +1617,7 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
           updatedAt: new Date().toISOString(),
         });
 
-        return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode };
+        return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode, pointsWon: totalPointsLost };
       }
       return null;
     } else if (game.turnUid === playerUid) {
@@ -1641,7 +1643,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       winnerToCredit.winnerUid,
       winnerToCredit.grossWin,
       winnerToCredit.platformFee,
-      winnerToCredit.playerNetShare
+      winnerToCredit.playerNetShare,
+      winnerToCredit.pointsWon
     );
   }
 }
@@ -1678,7 +1681,6 @@ export async function declareHand(
 
     for (const p of allPlayers) {
       if (p.uid === playerUid) {
-        scores[p.uid] = 0;
         penalties[p.uid] = 'Winner';
       } else if (p.status === 'dropped') {
         const dropPts = p.score || 20;
@@ -1692,12 +1694,12 @@ export async function declareHand(
         totalPointsLost += lossPts;
       }
     }
+    // Winner's score tracks points won
+    scores[playerUid] = totalPointsLost;
 
-    // Gross winnings calculation
-    let grossWin = totalPointsLost * (game.pointValue || 1);
-    if ((game.mode === 'pool101' || game.mode === 'deals') && grossWin === 0) {
-      grossWin = (game.entryFee || 0) * allPlayers.length;
-    }
+    // Gross winnings calculation based on total table prize pot (or points value if higher)
+    const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
+    let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
 
     // 14% platform fee automatically deducted from winnings
     // "जो प्लेयर विन करेगा, उसमें प्लेटफॉर्म उसी में होगा 14% प्ले ऑटोमेटिक कट जाएगा... पहले उसका 14% कट जाएगा उसके बाद ही उसको विन मिलेगी"
@@ -1732,7 +1734,7 @@ export async function declareHand(
       score: 0,
     });
 
-    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings
+    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings and loyalty points
     if (playerNetShare > 0) {
       await creditWinnerPayout(
         gameId,
@@ -1740,7 +1742,8 @@ export async function declareHand(
         playerUid,
         grossWin,
         platformFee,
-        playerNetShare
+        playerNetShare,
+        totalPointsLost
       );
     }
 

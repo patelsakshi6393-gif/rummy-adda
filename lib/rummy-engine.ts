@@ -323,3 +323,129 @@ export function calculateLossPoints(cards: Card[], wildJokerRank?: Rank): number
   }
   return Math.min(80, score);
 }
+
+/**
+ * Smart automatic card grouper / meld finder for 13-Card Indian Rummy hands
+ */
+export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
+  if (!cards || cards.length === 0) return [];
+  if (cards.length <= 4) return [cards];
+
+  const available = [...cards];
+  const melds: Card[][] = [];
+
+  // 1. Separate jokers and natural cards
+  const jokers: Card[] = [];
+  const naturals: Card[] = [];
+  for (const c of available) {
+    if (isJokerCard(c, wildJokerRank)) {
+      jokers.push(c);
+    } else {
+      naturals.push(c);
+    }
+  }
+
+  // 2. Find Pure Sequences first among naturals grouped by suit
+  const suits = ['spades', 'hearts', 'diamonds', 'clubs'] as const;
+  for (const suit of suits) {
+    const suitCards = naturals.filter(c => c.suit === suit);
+    if (suitCards.length < 3) continue;
+
+    const rankMap = new Map<number, Card>();
+    for (const c of suitCards) {
+      const rVal = c.rank === 'A' ? 1 : c.rank === 'J' ? 11 : c.rank === 'Q' ? 12 : c.rank === 'K' ? 13 : parseInt(c.rank, 10);
+      if (!rankMap.has(rVal)) rankMap.set(rVal, c);
+    }
+
+    const uniqueRanks = Array.from(rankMap.keys()).sort((a, b) => a - b);
+    let currentRun: number[] = [];
+    for (let i = 0; i < uniqueRanks.length; i++) {
+      if (currentRun.length === 0 || uniqueRanks[i] === currentRun[currentRun.length - 1] + 1) {
+        currentRun.push(uniqueRanks[i]);
+      } else {
+        if (currentRun.length >= 3) break;
+        currentRun = [uniqueRanks[i]];
+      }
+    }
+
+    // Check Ace high run: Q(12), K(13), A(1) or J(11), Q(12), K(13), A(1)
+    if (currentRun.length < 3 && rankMap.has(1) && rankMap.has(12) && rankMap.has(13)) {
+      const aceRun = [rankMap.get(12)!, rankMap.get(13)!, rankMap.get(1)!];
+      if (rankMap.has(11)) aceRun.unshift(rankMap.get(11)!);
+      if (rankMap.has(10)) aceRun.unshift(rankMap.get(10)!);
+      melds.push(aceRun);
+      for (const card of aceRun) {
+        const idx = naturals.findIndex(c => c.id === card.id);
+        if (idx !== -1) naturals.splice(idx, 1);
+      }
+      continue;
+    }
+
+    if (currentRun.length >= 3) {
+      const seqCards = currentRun.map(r => rankMap.get(r)!);
+      melds.push(seqCards);
+      for (const card of seqCards) {
+        const idx = naturals.findIndex(c => c.id === card.id);
+        if (idx !== -1) naturals.splice(idx, 1);
+      }
+    }
+  }
+
+  // 3. Find Sets among remaining naturals
+  const rankGroups = new Map<string, Card[]>();
+  for (const c of naturals) {
+    const list = rankGroups.get(c.rank) || [];
+    list.push(c);
+    rankGroups.set(c.rank, list);
+  }
+
+  for (const [, cardsWithRank] of rankGroups.entries()) {
+    const uniqueSuitCards: Card[] = [];
+    const seenSuits = new Set<string>();
+    for (const c of cardsWithRank) {
+      if (!seenSuits.has(c.suit)) {
+        seenSuits.add(c.suit);
+        uniqueSuitCards.push(c);
+      }
+    }
+    if (uniqueSuitCards.length >= 3) {
+      melds.push(uniqueSuitCards);
+      for (const card of uniqueSuitCards) {
+        const idx = naturals.findIndex(c => c.id === card.id);
+        if (idx !== -1) naturals.splice(idx, 1);
+      }
+    }
+  }
+
+  // 4. Attach jokers to valid melds or combine with leftover naturals
+  while (jokers.length > 0 && melds.length > 0) {
+    const targetMeld = melds.find(m => m.length === 3);
+    if (targetMeld) {
+      targetMeld.push(jokers.pop()!);
+    } else {
+      break;
+    }
+  }
+
+  // 5. Any leftover cards
+  const leftovers = [...naturals, ...jokers];
+  if (leftovers.length > 0) {
+    if (melds.length === 0) {
+      const chunks: Card[][] = [];
+      for (let i = 0; i < leftovers.length; i += 4) {
+        chunks.push(leftovers.slice(i, i + 4));
+      }
+      return chunks;
+    }
+    // Put remaining into separate group or chunk
+    if (leftovers.length <= 4) {
+      melds.push(leftovers);
+    } else {
+      melds.push(leftovers.slice(0, 3));
+      melds.push(leftovers.slice(3));
+    }
+  }
+
+  return melds;
+}
+

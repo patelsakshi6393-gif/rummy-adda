@@ -8,7 +8,7 @@ interface PlayingCardProps {
   wildJokerRank?: Rank;
   isSelected?: boolean;
   onClick?: () => void;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'hand';
   disabled?: boolean;
 }
 
@@ -37,6 +37,7 @@ export function PlayingCard({
 
   const sizeClasses = {
     sm: 'w-9 h-14 sm:w-11 sm:h-16 text-[10px] sm:text-xs rounded-md',
+    hand: 'w-8 h-13 min-[400px]:w-9 min-[400px]:h-14 sm:w-11 sm:h-16 md:w-12 md:h-18 text-[9px] sm:text-xs rounded-md sm:rounded-lg',
     md: 'w-11 h-17 sm:w-13 sm:h-20 md:w-15 md:h-22 lg:w-16 lg:h-24 text-xs sm:text-sm rounded-lg',
     lg: 'w-15 h-22 sm:w-18 sm:h-27 md:w-20 md:h-30 text-sm sm:text-base rounded-xl',
   };

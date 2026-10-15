@@ -31,6 +31,8 @@ import {
   isImpureSequence,
   isValidSet,
   calculateLossPoints,
+  findBestMelds,
+  validateDeclaration,
 } from '@/lib/rummy-engine';
 import {
   doc,
@@ -89,6 +91,7 @@ export default function GameRoomPage() {
   const [showDeclareModal, setShowDeclareModal] = useState(false);
   const [showHowToPlayModal, setShowHowToPlayModal] = useState(false);
   const [declareGroups, setDeclareGroups] = useState<Card[][]>([[], [], [], []]);
+  const [declareFinishCard, setDeclareFinishCard] = useState<Card | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -326,15 +329,23 @@ export default function GameRoomPage() {
 
   // Open Declare Modal with grouped hand
   const handleOpenDeclare = () => {
-    if (myPlayer?.cards) {
-      const cards = [...myPlayer.cards];
-      setDeclareGroups([
-        cards.slice(0, 4),
-        cards.slice(4, 7),
-        cards.slice(7, 10),
-        cards.slice(10),
-      ]);
+    if (!myPlayer?.cards || myPlayer.cards.length === 0) return;
+    const cards = [...myPlayer.cards];
+    let finishCard: Card | null = null;
+    let meldCards = cards;
+
+    // In 13-card Indian Rummy, declaring requires exactly 13 cards.
+    // If the player has drawn (14 cards in hand), 1 card is discarded to the finish slot.
+    if (cards.length >= 14) {
+      const selIdx = selectedCardId ? cards.findIndex((c) => c.id === selectedCardId) : -1;
+      const finishIdx = selIdx !== -1 ? selIdx : cards.length - 1;
+      finishCard = cards[finishIdx];
+      meldCards = cards.filter((_, idx) => idx !== finishIdx);
     }
+
+    setDeclareFinishCard(finishCard);
+    const bestMelds = findBestMelds(meldCards, wildJokerRank);
+    setDeclareGroups(bestMelds);
     setShowDeclareModal(true);
   };
 
@@ -535,14 +546,6 @@ export default function GameRoomPage() {
               <span className="hidden md:inline">Rules</span>
             </button>
 
-            <button
-              onClick={handleCopyInvite}
-              className="py-1 px-2 rounded-lg bg-white/10 hover:bg-white/15 text-slate-300 hover:text-white text-[10px] sm:text-xs font-semibold flex items-center gap-1 transition-colors"
-              title="Share / Test with 2nd player"
-            >
-              {copiedLink ? <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" /> : <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />}
-              <span className="hidden md:inline">{copiedLink ? 'Copied' : 'Invite'}</span>
-            </button>
 
             <button
               onClick={() => {
@@ -598,12 +601,12 @@ export default function GameRoomPage() {
         {/* 
           6-PLAYER CIRCULAR/OVAL LUXURY CASINO TABLE (Fully Adaptive for Phone Landscape, Tablet & Desktop)
         */}
-        <div className="flex-1 relative flex items-center justify-center p-1 sm:p-2.5 md:p-4 w-full h-full max-h-[calc(100dvh-44px)] overflow-hidden">
-          <div className="w-full max-w-7xl h-full max-h-full rounded-2xl sm:rounded-[36px] md:rounded-[56px] lg:rounded-[72px] bg-gradient-to-b from-[#2a1708] via-[#1a0f05] to-[#2a1708] p-1 sm:p-2 md:p-3 shadow-2xl relative border-2 border-amber-600/30 flex items-center justify-center">
+        <div className="flex-1 relative flex items-center justify-center p-0.5 sm:p-1.5 md:p-2.5 w-full h-full max-h-[calc(100dvh-44px)] overflow-hidden">
+          <div className="w-full max-w-7xl h-full max-h-full rounded-2xl sm:rounded-[36px] md:rounded-[56px] lg:rounded-[72px] bg-gradient-to-b from-[#2a1708] via-[#1a0f05] to-[#2a1708] p-0.5 sm:p-1.5 md:p-2 shadow-2xl relative border-2 border-amber-600/30 flex items-center justify-center">
             {/* Gold Rail Lip */}
-            <div className="w-full h-full rounded-xl sm:rounded-[30px] md:rounded-[48px] lg:rounded-[64px] border border-amber-400/40 p-0.5 sm:p-1.5 md:p-2 bg-[#0d0905]">
+            <div className="w-full h-full rounded-xl sm:rounded-[30px] md:rounded-[48px] lg:rounded-[64px] border border-amber-400/40 p-0.5 sm:p-1 md:p-1.5 bg-[#0d0905]">
               {/* Green Felt Surface with Radial Glow */}
-              <div className="w-full h-full rounded-lg sm:rounded-[26px] md:rounded-[42px] lg:rounded-[58px] table-felt-radial border border-emerald-950 shadow-inner relative flex flex-col justify-between p-1 sm:p-2.5 md:p-3.5 overflow-hidden">
+              <div className="w-full h-full rounded-lg sm:rounded-[26px] md:rounded-[42px] lg:rounded-[58px] table-felt-radial border border-emerald-950 shadow-inner relative flex flex-col justify-between p-1 sm:p-2 overflow-hidden">
                 {/* Felt Watermark */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.05]">
                   <span className="text-4xl sm:text-7xl md:text-8xl lg:text-9xl font-black text-white">♠ RUMMYADDA</span>
@@ -670,59 +673,32 @@ export default function GameRoomPage() {
                 <div className="flex-1 flex items-center justify-center gap-3 sm:gap-6 md:gap-10 relative z-10 my-0.5 min-h-0">
                   {/* WAITING ROOM (when waiting for real players) */}
                   {game?.status === 'WAITING' && (
-                    <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-4 sm:px-8 py-3 sm:py-5 rounded-2xl sm:rounded-3xl text-center space-y-2.5 shadow-2xl max-w-sm sm:max-w-md w-full">
+                    <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-4 sm:py-6 rounded-2xl sm:rounded-3xl text-center space-y-3.5 shadow-2xl max-w-sm sm:max-w-md w-full">
                       <div className="flex items-center justify-center gap-2 text-amber-400">
-                        <Users className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" />
+                        <Users className="w-5 h-5 animate-pulse" />
                         <span className="font-extrabold text-xs sm:text-sm uppercase tracking-wider">
                           Waiting for Players ({players.length}/6)
                         </span>
                       </div>
 
-                      <p className="text-[10px] sm:text-xs text-slate-300 leading-relaxed">
-                        Wait for real players to join, or click below to play instantly with AI Bot!
-                      </p>
+                      <div className="py-2 space-y-2">
+                        <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                        <p className="text-xs text-slate-200 font-semibold">
+                          Waiting for another real player to join the table...
+                        </p>
+                        <p className="text-[11px] text-amber-300/80">
+                          Table Fee: ₹{game.entryFee} • Match starts automatically when 2nd player joins
+                        </p>
+                      </div>
 
-                      {/* Instant AI Bot Match Button */}
                       <button
                         type="button"
-                        onClick={async () => {
-                          if (!game || !user) return;
-                          setActionLoading(true);
-                          setErrorToast(null);
-                          try {
-                            await startPracticeBotMatch(game.gameId, user.uid, profile);
-                          } catch (err: unknown) {
-                            setErrorToast(err instanceof Error ? err.message : String(err));
-                          } finally {
-                            setActionLoading(false);
-                          }
-                        }}
-                        disabled={actionLoading}
-                        className="w-full py-2 sm:py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 hover:from-emerald-400 hover:to-teal-300 text-black font-black text-xs uppercase shadow-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+                        onClick={handleLeaveQueue}
+                        disabled={leavingQueue}
+                        className="w-full py-2 px-4 rounded-xl bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-xs border border-white/10 hover:border-rose-500/40 transition-colors disabled:opacity-50"
                       >
-                        <Bot className="w-4 h-4 text-black" />
-                        <span>{actionLoading ? 'Starting Match...' : 'Play Instant Practice (AI Bot)'}</span>
+                        {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
                       </button>
-
-                      <div className="flex flex-col sm:flex-row gap-1.5 pt-1">
-                        <button
-                          type="button"
-                          onClick={handleCopyInvite}
-                          className="flex-1 py-1.5 sm:py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-[11px] sm:text-xs flex items-center justify-center gap-1 transition-colors"
-                        >
-                          {copiedLink ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedLink ? 'Link Copied!' : 'Invite 2nd Player'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={handleLeaveQueue}
-                          disabled={leavingQueue}
-                          className="py-1.5 sm:py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white font-bold text-[11px] sm:text-xs border border-white/10 transition-colors disabled:opacity-50"
-                        >
-                          {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
-                        </button>
-                      </div>
                     </div>
                   )}
 
@@ -800,7 +776,7 @@ export default function GameRoomPage() {
                 {/* 
                   3. BOTTOM AREA (Your Seat, Hand Cards, Turn Timer & Action Bar)
                 */}
-                <div className="w-full relative z-20 flex flex-col items-center gap-1.5 pb-1">
+                <div className="w-full relative z-30 shrink-0 flex flex-col items-center gap-1 pb-1">
                   {/* Turn Status Message */}
                   {game?.status === 'PLAYING' && (
                     <div className="w-full max-w-md flex flex-col items-center gap-0.5">
@@ -819,7 +795,7 @@ export default function GameRoomPage() {
                       </div>
 
                       {/* Progress Bar */}
-                      <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                      <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden border border-white/10">
                         <div
                           className={`h-full transition-all duration-1000 ${
                             turnTimeLeft <= 10
@@ -836,12 +812,12 @@ export default function GameRoomPage() {
 
                   {/* Player Hand Cards with Wild Joker Indication */}
                   {myPlayer?.cards && myPlayer.cards.length > 0 && (
-                    <div className="flex items-center justify-center -space-x-3 sm:-space-x-4 max-w-full overflow-x-auto py-1 px-4">
+                    <div className="flex items-center justify-center -space-x-3 sm:-space-x-3.5 max-w-full overflow-x-auto py-0.5 px-2">
                       {myPlayer.cards.map((card) => {
                         const isWild = card.rank === wildJokerRank;
                         const isSelected = selectedCardId === card.id;
                         return (
-                          <div key={card.id} className="relative group">
+                          <div key={card.id} className="relative group shrink-0">
                             {isWild && (
                               <span className="absolute -top-2 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[8px] px-1 py-0.2 rounded shadow">
                                 JOKER
@@ -852,7 +828,7 @@ export default function GameRoomPage() {
                               wildJokerRank={wildJokerRank}
                               isSelected={isSelected}
                               onClick={() => setSelectedCardId(isSelected ? null : card.id)}
-                              size="md"
+                              size="hand"
                             />
                           </div>
                         );
@@ -860,37 +836,42 @@ export default function GameRoomPage() {
                     </div>
                   )}
 
-                  {/* Action Controls Bar */}
+                  {/* Action Controls Bar - Solid Dock with Fixed Visibility */}
                   {game?.status === 'PLAYING' && (
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-0.5">
+                    <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 py-1 px-3 bg-black/85 backdrop-blur-md rounded-xl sm:rounded-2xl border border-amber-500/40 shadow-2xl shrink-0 z-40 my-0.5">
                       <button
                         onClick={handleAutoSortHand}
-                        className="py-1.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-colors"
+                        className="py-1 px-2.5 sm:py-1.5 sm:px-3 rounded-lg sm:rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] sm:text-xs transition-colors flex items-center gap-1"
+                        title="Sort cards by suit and rank"
                       >
-                        SORT
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>SORT</span>
                       </button>
 
                       {/* Live Hand Penalty Score & Explanatory Button */}
                       <button
                         type="button"
                         onClick={() => setShowHowToPlayModal(true)}
-                        className="py-1 px-2.5 rounded-xl bg-black/60 border border-amber-500/30 hover:border-amber-400 text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                        className="py-0.5 px-2 sm:py-1 sm:px-2.5 rounded-lg sm:rounded-xl bg-black/80 border border-amber-500/30 hover:border-amber-400 text-[10px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer"
                         title="In Rummy, points are penalties! Goal is 0 Points to win. Click to learn how to play."
                       >
-                        <span className="text-slate-400 text-[11px]">Penalty:</span>
+                        <span className="text-slate-400 text-[9px] sm:text-[11px]">Penalty:</span>
                         <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {currentHandPenalty} Pts
                         </span>
-                        <span className="text-[10px] text-amber-300 font-bold hidden sm:inline">
+                        <span className="text-[9px] text-amber-300 font-bold hidden sm:inline">
                           (Goal: 0 Pts 🏆)
                         </span>
-                        <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
                       </button>
 
                       <button
                         onClick={handleDiscard}
                         disabled={!isMyTurn || !hasDrawn || !selectedCardId || actionLoading}
-                        className="py-1.5 px-4 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase shadow-md transition-all active:scale-95 disabled:opacity-40"
+                        className={`py-1 px-3 sm:py-1.5 sm:px-4 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow-md transition-all active:scale-95 ${
+                          isMyTurn && hasDrawn && selectedCardId
+                            ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
+                            : 'bg-white/10 text-slate-400 cursor-not-allowed opacity-50'
+                        }`}
                       >
                         DISCARD
                       </button>
@@ -898,7 +879,11 @@ export default function GameRoomPage() {
                       <button
                         onClick={handleOpenDeclare}
                         disabled={!isMyTurn || actionLoading}
-                        className="py-1.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-black text-xs uppercase shadow-md transition-all hover:scale-105 disabled:opacity-40"
+                        className={`py-1 px-3 sm:py-1.5 sm:px-4 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow-md transition-all hover:scale-105 active:scale-95 ${
+                          isMyTurn
+                            ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 text-black cursor-pointer shadow-emerald-500/30'
+                            : 'bg-white/10 text-slate-400 cursor-not-allowed opacity-50'
+                        }`}
                       >
                         DECLARE / SHOW
                       </button>
@@ -921,69 +906,122 @@ export default function GameRoomPage() {
         {/* 
           DECLARATION REVIEW MODAL 
         */}
-        {showDeclareModal && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-[#12131e] border border-amber-500/40 rounded-3xl p-6 max-w-2xl w-full space-y-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-xl font-bold text-white">Declare Hand Show</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Valid show requires at least 2 sequences (including at least 1 Pure Sequence without jokers).
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowDeclareModal(false)}
-                  className="p-1 rounded-lg hover:bg-white/10 text-slate-400"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Grouping Area */}
-              <div className="space-y-3">
-                <p className="text-xs text-amber-300 font-semibold">Your Grouped Cards:</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {declareGroups.map((grp, gIdx) => (
-                    <div key={gIdx} className="p-3 rounded-xl bg-[#090a12] border border-white/5 space-y-2">
-                      <div className="flex items-center justify-between text-[11px] font-bold">
-                        <span className="text-slate-400">Group {gIdx + 1}</span>
-                        <span className="text-amber-400">
-                          {isPureSequence(grp, wildJokerRank)
-                            ? 'Pure Sequence ✓'
-                            : isImpureSequence(grp, wildJokerRank)
-                            ? 'Impure Sequence'
-                            : isValidSet(grp, wildJokerRank)
-                            ? 'Valid Set'
-                            : 'Unmelded'}
+        {showDeclareModal && (() => {
+          const declareValidation = validateDeclaration(declareGroups, wildJokerRank);
+          return (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4">
+              <div className="bg-[#12131e] border border-amber-500/40 rounded-3xl p-5 sm:p-6 max-w-2xl w-full space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                      <span>Declare Hand Show</span>
+                      {declareValidation.isValid ? (
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded-full font-black">
+                          VALID SHOW ✓
                         </span>
-                      </div>
-                      <div className="flex -space-x-2">
-                        {grp.map((c) => (
-                          <PlayingCard key={c.id} card={c} wildJokerRank={wildJokerRank} size="sm" disabled />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                      ) : (
+                        <span className="text-[10px] bg-rose-500/20 text-rose-400 border border-rose-500/40 px-2 py-0.5 rounded-full font-black">
+                          INCOMPLETE ⚠️
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Valid show requires at least 2 sequences (including at least 1 Pure Sequence without jokers).
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowDeclareModal(false)}
+                    className="p-1 rounded-lg hover:bg-white/10 text-slate-400"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
-              </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
-                <button
-                  onClick={() => setShowDeclareModal(false)}
-                  className="py-2.5 px-4 rounded-xl bg-white/10 text-xs font-bold text-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmDeclare}
-                  className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-black text-xs uppercase shadow-md hover:scale-105 transition-all"
-                >
-                  Confirm Declaration
-                </button>
+                {/* Finish / Discard Card (if drawn 14th card) */}
+                {declareFinishCard && (
+                  <div className="flex items-center gap-3 p-2.5 rounded-xl bg-black/60 border border-amber-500/30">
+                    <span className="text-xs font-bold text-amber-300">Finish / Discard Card:</span>
+                    <PlayingCard card={declareFinishCard} wildJokerRank={wildJokerRank} size="sm" disabled />
+                    <span className="text-[10px] text-slate-400">Discarded to finish hand declaration</span>
+                  </div>
+                )}
+
+                {/* Live Meld Validation Banner */}
+                {declareValidation.isValid ? (
+                  <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>
+                      <strong>Valid Show!</strong> All 13 cards form valid melds ({declareValidation.pureSequenceCount} Pure Seq, {declareValidation.totalSequenceCount} Total Seq). You will win this match!
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>
+                      <strong>Warning:</strong> {declareValidation.message} Declaring an invalid hand incurs an <strong>80 points penalty</strong>!
+                    </span>
+                  </div>
+                )}
+
+                {/* Grouping Area */}
+                <div className="space-y-2.5">
+                  <p className="text-xs text-amber-300 font-semibold">Your Grouped Cards (13 Cards):</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {declareGroups.map((grp, gIdx) => (
+                      <div key={gIdx} className="p-2.5 rounded-xl bg-[#090a12] border border-white/5 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold">
+                          <span className="text-slate-400">Group {gIdx + 1} ({grp.length} Cards)</span>
+                          <span className={
+                            isPureSequence(grp, wildJokerRank)
+                              ? 'text-emerald-400'
+                              : isImpureSequence(grp, wildJokerRank)
+                              ? 'text-teal-300'
+                              : isValidSet(grp, wildJokerRank)
+                              ? 'text-amber-300'
+                              : 'text-rose-400'
+                          }>
+                            {isPureSequence(grp, wildJokerRank)
+                              ? 'Pure Sequence ✓'
+                              : isImpureSequence(grp, wildJokerRank)
+                              ? 'Impure Sequence'
+                              : isValidSet(grp, wildJokerRank)
+                              ? 'Valid Set'
+                              : 'Unmelded'}
+                          </span>
+                        </div>
+                        <div className="flex -space-x-2 overflow-x-auto py-0.5">
+                          {grp.map((c) => (
+                            <PlayingCard key={c.id} card={c} wildJokerRank={wildJokerRank} size="sm" disabled />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                  <button
+                    onClick={() => setShowDeclareModal(false)}
+                    className="py-2 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-slate-300"
+                  >
+                    Cancel / Keep Playing
+                  </button>
+                  <button
+                    onClick={handleConfirmDeclare}
+                    disabled={actionLoading}
+                    className={`py-2.5 px-6 rounded-xl font-black text-xs uppercase shadow-md transition-all ${
+                      declareValidation.isValid
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-black hover:scale-105 shadow-emerald-500/30'
+                        : 'bg-rose-600/80 hover:bg-rose-600 text-white'
+                    }`}
+                  >
+                    {declareValidation.isValid ? 'Confirm & Win Match 🏆' : 'Submit Anyway (Risk 80 Pts)'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* 
           DROP CONFIRMATION MODAL 
@@ -1023,10 +1061,10 @@ export default function GameRoomPage() {
         */}
         {game?.status === 'RESULT' && (
           <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-gradient-to-b from-[#161726] to-[#0c0d15] border border-amber-500/40 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl space-y-6 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-300 p-0.5 mx-auto shadow-xl shadow-amber-500/30">
-                <div className="w-full h-full bg-[#150a0f] rounded-[14px] flex items-center justify-center text-3xl font-black text-amber-400">
-                  <Trophy className="w-8 h-8" />
+            <div className="bg-gradient-to-b from-[#161726] to-[#0c0d15] border border-amber-500/40 rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl space-y-5 text-center max-h-[92vh] overflow-y-auto">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-300 p-0.5 mx-auto shadow-xl shadow-amber-500/30">
+                <div className="w-full h-full bg-[#150a0f] rounded-[14px] flex items-center justify-center text-2xl font-black text-amber-400">
+                  <Trophy className="w-7 h-7" />
                 </div>
               </div>
 
@@ -1034,11 +1072,11 @@ export default function GameRoomPage() {
                 <span className="text-xs font-extrabold tracking-widest uppercase text-amber-400">
                   Match Result
                 </span>
-                <h2 className="text-2xl font-black text-white mt-1">
+                <h2 className="text-xl sm:text-2xl font-black text-white mt-0.5">
                   {game.winnerUid === user?.uid ? '🏆 Congratulations! You Won!' : 'Match Concluded'}
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Hand #{game.gameId.slice(-8)} • Table {game.mode.toUpperCase()}
+                  Hand #{game.gameId.slice(-8)} • Table {game.mode.toUpperCase()} (₹{game.entryFee} Stake)
                 </p>
               </div>
 
@@ -1046,28 +1084,31 @@ export default function GameRoomPage() {
               <div className="bg-[#090a12] border border-white/5 rounded-2xl p-4 text-xs divide-y divide-white/5">
                 {players.map((p) => {
                   const isWinner = p.uid === game.winnerUid;
-                  const pts = game.resultData?.scores[p.uid] ?? p.score;
+                  const pts = game.resultData?.scores[p.uid] ?? p.score ?? 0;
                   return (
                     <div key={p.uid} className="py-2.5 flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${
-                          isWinner ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-400'
+                        <span className={`w-6 h-6 rounded-full flex items-center justify-center font-black text-[11px] ${
+                          isWinner ? 'bg-amber-400 text-black shadow-lg shadow-amber-400/40' : 'bg-slate-800 text-slate-400'
                         }`}>
                           {isWinner ? 'W' : 'L'}
                         </span>
                         <div className="text-left">
-                          <p className="font-bold text-white">{p.displayName}</p>
+                          <p className="font-bold text-white flex items-center gap-1.5">
+                            <span>{p.displayName}</span>
+                            {isWinner && <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1.5 py-0.2 rounded font-black">WINNER 🏆</span>}
+                          </p>
                           <p className="text-[10px] font-mono text-slate-400">{p.playerId}</p>
                         </div>
                       </div>
 
                       <div className="text-right">
-                        <p className={`font-black ${isWinner ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {isWinner ? '0 pts (Winner)' : `${pts} pts`}
+                        <p className={`font-black text-sm ${isWinner ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {isWinner ? `+${pts} Pts (Won)` : `-${pts} Pts (${p.status === 'dropped' ? 'Drop' : 'Loss'})`}
                         </p>
                         {isWinner && game.resultData?.payouts[p.uid] ? (
-                          <span className="text-[10px] text-amber-300 font-bold">
-                            +₹{game.resultData.payouts[p.uid].toLocaleString('en-IN')} credited to Winnings!
+                          <span className="text-[11px] text-amber-300 font-bold block">
+                            +₹{game.resultData.payouts[p.uid].toLocaleString('en-IN')} Credited to Winnings!
                           </span>
                         ) : null}
                       </div>
@@ -1079,20 +1120,26 @@ export default function GameRoomPage() {
               {/* Winning Amount & 14% Platform Fee Breakdown */}
               {game.resultData && (game.resultData.grossWin || 0) > 0 && (
                 <div className="bg-[#090a12] border border-amber-500/20 rounded-2xl p-4 text-xs space-y-2 text-left">
-                  <div className="flex items-center justify-between font-bold text-slate-300 pb-1.5 border-b border-white/5">
-                    <span>🏆 Total Winning Pot:</span>
+                  <div className="flex items-center justify-between font-bold text-amber-300 pb-1 border-b border-white/5">
+                    <span>🏆 Points Won:</span>
+                    <span className="font-mono text-base font-black text-emerald-400">
+                      +{(game.winnerUid && game.resultData.scores[game.winnerUid]) || (game.resultData.winnerUid && game.resultData.scores[game.resultData.winnerUid]) || 0} Points
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between font-bold text-slate-300">
+                    <span>Total Winning Pot:</span>
                     <span className="font-mono text-white">₹{game.resultData.grossWin?.toLocaleString('en-IN')}</span>
                   </div>
                   <div className="flex items-center justify-between text-rose-300">
                     <span>Platform Fee (14% automatic cut):</span>
                     <span className="font-mono font-bold text-rose-400">-₹{game.resultData.platformFee?.toLocaleString('en-IN')}</span>
                   </div>
-                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1 border-t border-white/10">
-                    <span>Net Winning Amount Credited:</span>
-                    <span className="font-mono text-sm font-black">₹{game.resultData.playerNetShare?.toLocaleString('en-IN')}</span>
+                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1.5 border-t border-white/10">
+                    <span className="text-sm">Net Winning Credited (100% Withdrawable):</span>
+                    <span className="font-mono text-base font-black">₹{game.resultData.playerNetShare?.toLocaleString('en-IN')}</span>
                   </div>
-                  <p className="text-[10px] text-amber-300/90 pt-1">
-                    💡 14% प्लेटफॉर्म फीस कटने के बाद विनिंग राशि विजेता के Winnings वॉलेट में जमा हो गई है। विथड्रॉल के समय 0% फीस कटती है (पूरी राशि मिलेगी)!
+                  <p className="text-[10px] text-slate-400 pt-1">
+                    💡 14% प्लेटफॉर्म फीस कटने के बाद राशि आपके Winnings वॉलेट में जमा हो चुकी है। विथड्रॉल के समय कोई फीस नहीं कटेगी (0% कटौती)!
                   </p>
                 </div>
               )}
@@ -1101,13 +1148,13 @@ export default function GameRoomPage() {
               <div className="flex items-center justify-center gap-3 pt-2">
                 <Link
                   href="/lobby"
-                  className="py-3 px-5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs"
+                  className="py-2.5 px-5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs"
                 >
                   Return to Lobby
                 </Link>
                 <Link
                   href="/lobby"
-                  className="py-3 px-6 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase shadow-lg shadow-amber-500/20"
+                  className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-xs uppercase shadow-lg shadow-amber-500/20"
                 >
                   Play Another Match
                 </Link>
