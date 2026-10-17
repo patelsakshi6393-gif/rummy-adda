@@ -12,3 +12,4 @@ www/
 *.apk
 .gradle/
 bun.lock.bak
+*.tsbuildinfo

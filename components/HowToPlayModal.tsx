@@ -378,12 +378,14 @@ export function HowToPlayModal({ isOpen, onClose, defaultTab = 'basics' }: HowTo
               </div>
 
               {/* Joker Rules */}
-              <div className="p-4 rounded-2xl bg-[#0f111c] border border-white/10 space-y-2">
+              <div className="p-4 rounded-2xl bg-[#0f111c] border border-amber-500/30 space-y-2">
                 <h4 className="text-sm font-bold text-amber-300">How Jokers Work in Rummy Adda:</h4>
                 <ul className="text-xs text-slate-300 space-y-1.5 list-disc list-inside">
-                  <li><strong>Wild Joker:</strong> At the start of each match, 1 card is randomly chosen from the closed deck (e.g. 7). All 4 cards of rank 7 across all suits become Wild Jokers for that match!</li>
-                  <li><strong>Printed Jokers:</strong> The 2 printed Joker cards in the deck also act as universal substitutes for any card.</li>
-                  <li><strong>Points:</strong> Jokers carry <strong>0 points</strong> in end-of-round penalty calculations.</li>
+                  <li><strong>Wild / Master Card:</strong> Joker acts as the master wildcard that substitutes for ANY missing card in runs or sets.</li>
+                  <li><strong>Missing Card Replacement:</strong> If a card is missing between two cards (e.g. 4♠ and 6♠), a Joker replaces the missing 5♠ to complete the sequence!</li>
+                  <li><strong>Sets with Jokers:</strong> Complete 3-card sets with a Joker (e.g. 7♠, 7♥ + Joker), and create <strong>4, 5, or 6-card sets</strong> with Jokers!</li>
+                  <li><strong>Automatic Check & +20 Points:</strong> The game automatically checks your sets in real-time and awards <strong>+20 Points</strong> for every valid set formed!</li>
+                  <li><strong>0 Penalty Points:</strong> Jokers carry <strong>0 penalty points</strong> if caught in an unmatched hand.</li>
                 </ul>
               </div>
 
@@ -410,14 +412,14 @@ export function HowToPlayModal({ isOpen, onClose, defaultTab = 'basics' }: HowTo
             <div className="space-y-6">
               <div className="space-y-2">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-400 text-xs font-bold uppercase">
-                  Melding Same-Rank Cards
+                  Melding Same-Rank Cards (3 to 6 Cards)
                 </div>
                 <h3 className="text-xl font-black text-white">
                   What is a Set (सेट)?
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                  A Set consists of <strong>3 or 4 cards of the EXACT SAME rank, but from DIFFERENT suits</strong>.
-                  For example, three 8s from Diamonds, Clubs, and Spades.
+                  A Set consists of <strong>3, 4, 5, or 6 cards of the EXACT SAME rank</strong>, where natural cards have DIFFERENT suits and Jokers act as wildcards.
+                  Every completed Set awards <strong>+20 Points</strong> in Rummy Adda!
                 </p>
               </div>
 

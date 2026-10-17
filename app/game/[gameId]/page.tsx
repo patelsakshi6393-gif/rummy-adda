@@ -30,6 +30,8 @@ import {
   isPureSequence,
   isImpureSequence,
   isValidSet,
+  getGroupMeldStatus,
+  GroupMeldStatus,
   calculateLossPoints,
   findBestMelds,
   validateDeclaration,
@@ -78,6 +80,7 @@ export default function GameRoomPage() {
   const [players, setPlayers] = useState<GamePlayerState[]>([]);
   const [myPlayer, setMyPlayer] = useState<GamePlayerState | null>(null);
   const [playersLoaded, setPlayersLoaded] = useState(false);
+  const wildJokerRank = game?.wildJoker?.rank;
   // Multiple card selection & grouping for Sets
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const selectedCardId = selectedCardIds[0] || null;
@@ -392,6 +395,7 @@ export default function GameRoomPage() {
 
   // Group selected cards into a Set / Group
   // "तीन कार्ड सेलेक्ट करेंगे, सेट का ऑप्शन मिल जाएगा, सेट कर लेंगे कार्ड। इससे हम सेट्स बना सकते हैं।"
+  // "Joker ke through 4, 5, 6 cards ke set bhi banane ka option hona chahiye."
   const handleCreateSetFromSelection = () => {
     if (selectedCardIds.length === 0) return;
 
@@ -414,9 +418,19 @@ export default function GameRoomPage() {
       setSelectedCardIds([]);
       soundManager.playCardDraw();
 
-      const isSet = isValidSet(selectedCardsList, wildJokerRank);
-      if (isSet) {
-        setToastNotification('🎉 Valid Set Created! +20 Points Earned!');
+      const meldStatus = getGroupMeldStatus(selectedCardsList, wildJokerRank);
+      if (meldStatus.isValid) {
+        if (meldStatus.type === 'set') {
+          if (meldStatus.hasJoker) {
+            setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Set Formed with Joker! (${meldStatus.detailText}) +20 Pts!`);
+          } else {
+            setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Natural Set Formed! +20 Points Earned!`);
+          }
+        } else if (meldStatus.type === 'impure_seq') {
+          setToastNotification(`🎉 Valid Sequence Completed with Joker! (${meldStatus.detailText}) +20 Pts!`);
+        } else if (meldStatus.type === 'pure_seq') {
+          setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Pure Sequence Formed! +20 Points Earned!`);
+        }
         setTimeout(() => setToastNotification(null), 3500);
       } else {
         setToastNotification(`Group of ${selectedCardsList.length} cards formed!`);
@@ -613,7 +627,6 @@ export default function GameRoomPage() {
 
   const isMyTurn = game?.status === 'PLAYING' && game.turnUid === user?.uid;
   const hasDrawn = game?.hasDrawn;
-  const wildJokerRank = game?.wildJoker?.rank;
   const currentHandPenalty = myPlayer?.cards ? calculateLossPoints(myPlayer.cards, wildJokerRank) : 0;
 
   const handleLeaveTable = async () => {
@@ -1081,23 +1094,50 @@ export default function GameRoomPage() {
 
                   {/* Multi-Card Selection Actions Floating Bar */}
                   {/* "तीन कार्ड सेलेक्ट करेंगे, सेट का ऑप्शन मिल जाएगा, सेट कर लेंगे कार्ड।" */}
-                  {selectedCardIds.length >= 2 && (
-                    <div className="flex items-center gap-2 mb-0.5 animate-bounce z-40">
-                      <button
-                        onClick={handleCreateSetFromSelection}
-                        className="py-1 px-4 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black text-xs uppercase shadow-xl ring-2 ring-amber-300 flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all"
-                      >
-                        <span>✨</span>
-                        <span>CREATE SET / GROUP ({selectedCardIds.length} Cards)</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedCardIds([])}
-                        className="py-1 px-2.5 rounded-full bg-black/70 hover:bg-black/90 text-slate-300 text-[10px] font-bold border border-white/20"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
+                  {/* "Joker ke through 4, 5, 6 cards ke set bhi banane ka option hona chahiye." */}
+                  {/* "Important: Joker ko set mein use karne par game ko automatically check karna chahiye ki set valid hai ya nahi." */}
+                  {selectedCardIds.length >= 2 && (() => {
+                    const allCards = handGroups.flat().length > 0 ? handGroups.flat() : (myPlayer?.cards || []);
+                    const selCards = allCards.filter((c) => selectedCardIds.includes(c.id));
+                    const selStatus = getGroupMeldStatus(selCards, wildJokerRank);
+
+                    return (
+                      <div className="flex flex-col items-center gap-1 mb-0.5 animate-bounce z-40">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleCreateSetFromSelection}
+                            className={`py-1.5 px-4 rounded-full font-black text-xs uppercase shadow-xl flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all ${
+                              selStatus.isValid
+                                ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50'
+                                : 'bg-gradient-to-r from-slate-200 to-slate-400 text-black ring-1 ring-white/30'
+                            }`}
+                          >
+                            <span>{selStatus.isValid ? '⭐' : '✨'}</span>
+                            <span>
+                              {selStatus.type === 'set'
+                                ? `CREATE SET (${selectedCardIds.length} Cards) — VALID SET (+20 Pts)`
+                                : selStatus.type === 'impure_seq'
+                                ? `CREATE SEQUENCE (${selectedCardIds.length} Cards) — JOKER SEQ (+20 Pts)`
+                                : selStatus.type === 'pure_seq'
+                                ? `CREATE PURE SEQ (${selectedCardIds.length} Cards) — (+20 Pts)`
+                                : `GROUP ${selectedCardIds.length} CARDS`}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => setSelectedCardIds([])}
+                            className="py-1 px-2.5 rounded-full bg-black/70 hover:bg-black/90 text-slate-300 text-[10px] font-bold border border-white/20"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {selStatus.hasJoker && selStatus.isValid && (
+                          <div className="px-2.5 py-0.5 rounded-full bg-black/80 border border-amber-400/50 text-amber-300 text-[9px] font-bold shadow-md">
+                            💡 {selStatus.detailText}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Single Card Quick Movement Actions Bar */}
                   {/* "कार्ड को उठाकर अपने आप दूसरी साइड प्लेस कर सकते हैं।" */}
@@ -1138,9 +1178,7 @@ export default function GameRoomPage() {
                   {handGroups.length > 0 && (
                     <div className="w-full max-w-7xl px-2 sm:px-4 md:px-6 flex items-end justify-between sm:justify-around gap-1.5 sm:gap-3 overflow-x-auto py-1">
                       {handGroups.map((group, groupIdx) => {
-                        const isPure = isPureSequence(group, wildJokerRank);
-                        const isSet = isValidSet(group, wildJokerRank);
-                        const isImpure = isImpureSequence(group, wildJokerRank);
+                        const meldStatus = getGroupMeldStatus(group, wildJokerRank);
                         const isOver = dragOverGroupIdx === groupIdx;
 
                         return (
@@ -1153,32 +1191,40 @@ export default function GameRoomPage() {
                             className={`relative rounded-xl sm:rounded-2xl p-1 sm:p-1.5 transition-all duration-200 flex flex-col items-center gap-1 ${
                               isOver
                                 ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105'
-                                : isSet
-                                ? 'bg-amber-500/10 border border-amber-400/50 shadow-lg shadow-amber-500/15'
-                                : isPure
-                                ? 'bg-emerald-500/10 border border-emerald-500/40'
-                                : isImpure
-                                ? 'bg-teal-500/10 border border-teal-500/40'
+                                : meldStatus.type === 'set'
+                                ? meldStatus.hasJoker
+                                  ? 'bg-amber-500/15 border-2 border-amber-400 shadow-lg shadow-amber-500/20'
+                                  : 'bg-purple-500/10 border border-purple-400/50 shadow-md'
+                                : meldStatus.type === 'pure_seq'
+                                ? 'bg-emerald-500/10 border border-emerald-500/40 shadow-md'
+                                : meldStatus.type === 'impure_seq'
+                                ? 'bg-teal-500/10 border-2 border-teal-400/60 shadow-md'
                                 : 'bg-black/40 border border-white/10'
                             }`}
                           >
                             {/* Group Header Badge */}
                             <div className="flex items-center justify-between w-full px-1 gap-1 text-[8px] sm:text-[9px] font-bold">
                               <span className="text-slate-400 font-mono">G{groupIdx + 1}</span>
-                              {isSet ? (
-                                <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[8px] sm:text-[9px] shadow flex items-center gap-0.5">
-                                  <span>⭐</span> SET (+20 Pts)
-                                </span>
-                              ) : isPure ? (
+                              {meldStatus.type === 'set' ? (
+                                meldStatus.hasJoker ? (
+                                  <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[8px] sm:text-[9px] shadow flex items-center gap-0.5">
+                                    <span>⭐</span> JOKER SET ({group.length}) +20 Pts
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[8px] sm:text-[9px] font-black">
+                                    ✓ SET ({group.length}) +20 Pts
+                                  </span>
+                                )
+                              ) : meldStatus.type === 'pure_seq' ? (
                                 <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[8px] sm:text-[9px] font-black">
-                                  ✓ PURE SEQ
+                                  ✓ PURE SEQ +20 Pts
                                 </span>
-                              ) : isImpure ? (
+                              ) : meldStatus.type === 'impure_seq' ? (
                                 <span className="px-1.5 py-0.2 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[8px] sm:text-[9px] font-black">
-                                  IMPURE SEQ
+                                  ⭐ JOKER SEQ +20 Pts
                                 </span>
                               ) : (
-                                <span className="text-slate-500 text-[8px]">Group</span>
+                                <span className="text-slate-500 text-[8px]">Group ({group.length})</span>
                               )}
                               {handGroups.length > 1 && (
                                 <button
@@ -1222,6 +1268,16 @@ export default function GameRoomPage() {
                                 );
                               })}
                             </div>
+
+                            {/* Dynamic Live Joker Explanation Subtitle */}
+                            {meldStatus.hasJoker && meldStatus.isValid && meldStatus.detailText && (
+                              <div
+                                className="w-full text-center px-1 text-[7px] sm:text-[8px] font-medium text-amber-300 truncate max-w-full"
+                                title={meldStatus.detailText}
+                              >
+                                💡 {meldStatus.detailText}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1413,35 +1469,44 @@ export default function GameRoomPage() {
                 <div className="space-y-2.5">
                   <p className="text-xs text-amber-300 font-semibold">Your Grouped Cards (13 Cards):</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {declareGroups.map((grp, gIdx) => (
-                      <div key={gIdx} className="p-2.5 rounded-xl bg-[#090a12] border border-white/5 space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] font-bold">
-                          <span className="text-slate-400">Group {gIdx + 1} ({grp.length} Cards)</span>
-                          <span className={
-                            isPureSequence(grp, wildJokerRank)
-                              ? 'text-emerald-400'
-                              : isImpureSequence(grp, wildJokerRank)
-                              ? 'text-teal-300'
-                              : isValidSet(grp, wildJokerRank)
-                              ? 'text-amber-300'
-                              : 'text-rose-400'
-                          }>
-                            {isPureSequence(grp, wildJokerRank)
-                              ? 'Pure Sequence ✓'
-                              : isImpureSequence(grp, wildJokerRank)
-                              ? 'Impure Sequence'
-                              : isValidSet(grp, wildJokerRank)
-                              ? 'Valid Set'
-                              : 'Unmelded'}
-                          </span>
+                    {declareGroups.map((grp, gIdx) => {
+                      const grpStatus = getGroupMeldStatus(grp, wildJokerRank);
+
+                      return (
+                        <div key={gIdx} className="p-2.5 rounded-xl bg-[#090a12] border border-white/5 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] font-bold">
+                            <span className="text-slate-400">Group {gIdx + 1} ({grp.length} Cards)</span>
+                            <span className={
+                              grpStatus.type === 'pure_seq'
+                                ? 'text-emerald-400'
+                                : grpStatus.type === 'impure_seq'
+                                ? 'text-teal-300'
+                                : grpStatus.type === 'set'
+                                ? 'text-amber-300'
+                                : 'text-rose-400'
+                            }>
+                              {grpStatus.type === 'pure_seq'
+                                ? 'Pure Sequence ✓ (+20 Pts)'
+                                : grpStatus.type === 'impure_seq'
+                                ? `Joker Sequence ⭐ (${grp.length})`
+                                : grpStatus.type === 'set'
+                                ? (grpStatus.hasJoker ? `Joker Set ⭐ (${grp.length}) +20 Pts` : `Valid Set ✓ (${grp.length}) +20 Pts`)
+                                : 'Unmelded ✕'}
+                            </span>
+                          </div>
+                          <div className="flex -space-x-2 overflow-x-auto py-0.5">
+                            {grp.map((c) => (
+                              <PlayingCard key={c.id} card={c} wildJokerRank={wildJokerRank} size="sm" disabled />
+                            ))}
+                          </div>
+                          {grpStatus.hasJoker && grpStatus.isValid && grpStatus.detailText && (
+                            <div className="text-[9px] text-amber-300 font-medium">
+                              💡 {grpStatus.detailText}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex -space-x-2 overflow-x-auto py-0.5">
-                          {grp.map((c) => (
-                            <PlayingCard key={c.id} card={c} wildJokerRank={wildJokerRank} size="sm" disabled />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 

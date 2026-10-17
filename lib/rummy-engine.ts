@@ -200,21 +200,208 @@ export function isImpureSequence(cards: Card[], wildJokerRank?: Rank): boolean {
 }
 
 /**
- * Check if a group is a valid Set (3 or 4 cards of same rank, different suits; jokers allowed)
+ * Check if a group is a valid Set:
+ * - 3 to 6 cards of same rank (different suits for natural cards; jokers allowed to complete/extend).
+ * - Joker acts as wildcard master card filling missing suits or forming 4, 5, 6-card sets.
+ * - "Joker ke through 4, 5, 6 cards ke set bhi banane ka option hona chahiye."
+ * - "Agar teen cards ka set joker ki help se complete hota hai, to use valid set maana jaana chahiye."
  */
 export function isValidSet(cards: Card[], wildJokerRank?: Rank): boolean {
-  if (cards.length < 3 || cards.length > 4) return false;
+  if (cards.length < 3 || cards.length > 6) return false;
 
   const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
-  if (naturalCards.length === 0) return true; // All jokers count as valid set
+  if (naturalCards.length === 0) return true; // All wild jokers count as valid master set
+
+  // In Indian Rummy, maximum 4 natural suits (♠, ♥, ♦, ♣)
+  if (naturalCards.length > 4) return false;
 
   const targetRank = naturalCards[0].rank;
   if (!naturalCards.every(c => c.rank === targetRank)) return false;
 
-  // Suits of natural cards must be unique
+  // Suits of natural cards must be unique (no duplicate suits among natural cards)
   const suits = naturalCards.map(c => c.suit);
   const uniqueSuits = new Set(suits);
   return uniqueSuits.size === suits.length;
+}
+
+export const SUIT_SYMBOLS: Record<Suit | 'joker', string> = {
+  spades: '♠',
+  hearts: '♥',
+  diamonds: '♦',
+  clubs: '♣',
+  joker: '🃏',
+};
+
+export interface GroupMeldStatus {
+  isValid: boolean;
+  type: 'pure_seq' | 'impure_seq' | 'set' | 'invalid';
+  title: string;
+  badgeText: string;
+  detailText: string;
+  hasJoker: boolean;
+  jokerReplacements: string[];
+  points: number; // 20 points per valid set / meld
+  cardCount: number;
+}
+
+/**
+ * Automatically inspects a card group in real-time:
+ * 1. Determines if it's a valid Pure Sequence, Impure Sequence (with Joker), or Set (with Joker).
+ * 2. Identifies which missing card(s) the Joker is replacing.
+ * 3. Supports 3, 4, 5, and 6-card sets with Jokers.
+ * 4. Awards 20 points per valid set/meld.
+ */
+export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMeldStatus {
+  if (!cards || cards.length === 0) {
+    return {
+      isValid: false,
+      type: 'invalid',
+      title: 'EMPTY',
+      badgeText: 'Empty',
+      detailText: 'No cards in group',
+      hasJoker: false,
+      jokerReplacements: [],
+      points: 0,
+      cardCount: 0,
+    };
+  }
+
+  const hasJoker = cards.some(c => isJokerCard(c, wildJokerRank));
+  const cardCount = cards.length;
+
+  // 1. Pure Sequence (no wild joker acting as substitute)
+  if (isPureSequence(cards, wildJokerRank)) {
+    return {
+      isValid: true,
+      type: 'pure_seq',
+      title: 'PURE SEQUENCE',
+      badgeText: `✓ PURE SEQ (${cardCount}) +20 Pts`,
+      detailText: `Valid ${cardCount}-card Pure Sequence without jokers`,
+      hasJoker: false,
+      jokerReplacements: [],
+      points: 20,
+      cardCount,
+    };
+  }
+
+  // 2. Impure Sequence (with Joker replacing missing cards)
+  if (isImpureSequence(cards, wildJokerRank)) {
+    const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
+    const suit = naturalCards[0]?.suit || 'spades';
+    const suitSym = SUIT_SYMBOLS[suit] || '';
+
+    // Find missing rank(s) that jokers are replacing
+    const jokerReplacements: string[] = [];
+    const ranks = naturalCards.map(c => RANK_ORDER[c.rank]).sort((a, b) => a - b);
+    
+    // Check if ace high (e.g. Q, K, A)
+    let sortedRanks = [...ranks];
+    if (ranks.includes(1) && ranks.some(r => r >= 10)) {
+      sortedRanks = ranks.map(r => (r === 1 ? 14 : r)).sort((a, b) => a - b);
+    }
+
+    for (let i = 0; i < sortedRanks.length - 1; i++) {
+      for (let missing = sortedRanks[i] + 1; missing < sortedRanks[i + 1]; missing++) {
+        const rankStr = missing === 14 || missing === 1 ? 'A' : missing === 11 ? 'J' : missing === 12 ? 'Q' : missing === 13 ? 'K' : String(missing);
+        jokerReplacements.push(`${rankStr}${suitSym}`);
+      }
+    }
+
+    let detail = `Joker replaces missing ${jokerReplacements.join(', ')}`;
+    if (jokerReplacements.length === 0) {
+      detail = `Joker extends ${cardCount}-card sequence in ${suit}`;
+    }
+
+    return {
+      isValid: true,
+      type: 'impure_seq',
+      title: 'JOKER SEQUENCE',
+      badgeText: `⭐ JOKER SEQ (${cardCount}) +20 Pts`,
+      detailText: detail,
+      hasJoker: true,
+      jokerReplacements,
+      points: 20,
+      cardCount,
+    };
+  }
+
+  // 3. Set (3, 4, 5, or 6 cards of same rank with Jokers allowed)
+  if (isValidSet(cards, wildJokerRank)) {
+    const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
+    const jokerReplacements: string[] = [];
+
+    if (naturalCards.length === 0) {
+      return {
+        isValid: true,
+        type: 'set',
+        title: 'JOKER SET',
+        badgeText: `⭐ MASTER JOKER SET (${cardCount}) +20 Pts`,
+        detailText: `All-Wild Jokers Master Set (${cardCount} Cards)`,
+        hasJoker: true,
+        jokerReplacements: ['Master Wildcards'],
+        points: 20,
+        cardCount,
+      };
+    }
+
+    const targetRank = naturalCards[0].rank;
+    const existingSuits = new Set(naturalCards.map(c => c.suit));
+    const allSuits: Suit[] = ['spades', 'hearts', 'diamonds', 'clubs'];
+    const missingSuits = allSuits.filter(s => !existingSuits.has(s));
+
+    for (const ms of missingSuits) {
+      jokerReplacements.push(`${targetRank}${SUIT_SYMBOLS[ms]}`);
+    }
+
+    if (hasJoker) {
+      let detail = '';
+      if (cardCount <= 4 && jokerReplacements.length > 0) {
+        detail = `Joker acts as missing ${jokerReplacements.slice(0, 2).join('/')} in Set of ${targetRank}s`;
+      } else {
+        detail = `Joker completes ${cardCount}-card Master Set of ${targetRank}s`;
+      }
+
+      return {
+        isValid: true,
+        type: 'set',
+        title: 'JOKER SET',
+        badgeText: `⭐ JOKER SET (${cardCount}) +20 Pts`,
+        detailText: detail,
+        hasJoker: true,
+        jokerReplacements,
+        points: 20,
+        cardCount,
+      };
+    }
+
+    // Natural Set without Jokers
+    return {
+      isValid: true,
+      type: 'set',
+      title: 'VALID SET',
+      badgeText: `✓ VALID SET (${cardCount}) +20 Pts`,
+      detailText: `Valid natural ${cardCount}-card Set of ${targetRank}s`,
+      hasJoker: false,
+      jokerReplacements: [],
+      points: 20,
+      cardCount,
+    };
+  }
+
+  // 4. Invalid group
+  const needCards = cardCount < 3 ? `Need at least 3 cards (current: ${cardCount})` : 'Does not form a valid sequence or set';
+
+  return {
+    isValid: false,
+    type: 'invalid',
+    title: 'INVALID GROUP',
+    badgeText: `Group (${cardCount})`,
+    detailText: needCards,
+    hasJoker,
+    jokerReplacements: [],
+    points: 0,
+    cardCount,
+  };
 }
 
 export interface HandValidationResult {
@@ -399,7 +586,7 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
     rankGroups.set(c.rank, list);
   }
 
-  for (const [, cardsWithRank] of rankGroups.entries()) {
+  rankGroups.forEach((cardsWithRank) => {
     const uniqueSuitCards: Card[] = [];
     const seenSuits = new Set<string>();
     for (const c of cardsWithRank) {
@@ -415,11 +602,77 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
         if (idx !== -1) naturals.splice(idx, 1);
       }
     }
+  });
+
+  // 4. Use Jokers to complete incomplete sequences with missing cards (e.g. 4♠ [Joker] 6♠ or 4♠ 5♠ [Joker])
+  if (jokers.length > 0) {
+    for (const suit of suits) {
+      if (jokers.length === 0) break;
+      const suitCards = naturals.filter(c => c.suit === suit);
+      if (suitCards.length < 2) continue;
+
+      for (let i = 0; i < suitCards.length - 1; i++) {
+        if (jokers.length === 0) break;
+        const c1 = suitCards[i];
+        const c2 = suitCards[i + 1];
+        const r1 = RANK_ORDER[c1.rank];
+        const r2 = RANK_ORDER[c2.rank];
+        const diff = Math.abs(r2 - r1);
+
+        // Gap of 1 missing card (e.g. 4 and 6, diff=2) or consecutive pair (e.g. 4 and 5, diff=1)
+        if (diff === 1 || diff === 2 || (r1 === 1 && (r2 === 12 || r2 === 13))) {
+          const jk = jokers.pop()!;
+          const newMeld = [c1, jk, c2].sort((a, b) => {
+            const valA = isJokerCard(a, wildJokerRank) ? 99 : RANK_ORDER[a.rank];
+            const valB = isJokerCard(b, wildJokerRank) ? 99 : RANK_ORDER[b.rank];
+            return valA - valB;
+          });
+          melds.push(newMeld);
+
+          const idx1 = naturals.findIndex(c => c.id === c1.id);
+          if (idx1 !== -1) naturals.splice(idx1, 1);
+          const idx2 = naturals.findIndex(c => c.id === c2.id);
+          if (idx2 !== -1) naturals.splice(idx2, 1);
+          break;
+        }
+      }
+    }
   }
 
-  // 4. Attach jokers to valid melds or combine with leftover naturals
+  // 5. Use Jokers to complete 3-card Sets from 2 natural cards of same rank
+  if (jokers.length > 0) {
+    const remainingRankGroups = new Map<string, Card[]>();
+    for (const c of naturals) {
+      const list = remainingRankGroups.get(c.rank) || [];
+      list.push(c);
+      remainingRankGroups.set(c.rank, list);
+    }
+
+    remainingRankGroups.forEach((cardsWithRank) => {
+      if (jokers.length === 0) return;
+      const uniqueSuitCards: Card[] = [];
+      const seenSuits = new Set<string>();
+      for (const c of cardsWithRank) {
+        if (!seenSuits.has(c.suit)) {
+          seenSuits.add(c.suit);
+          uniqueSuitCards.push(c);
+        }
+      }
+      if (uniqueSuitCards.length === 2 && jokers.length > 0) {
+        const jk = jokers.pop()!;
+        const setMeld = [...uniqueSuitCards, jk];
+        melds.push(setMeld);
+        for (const card of uniqueSuitCards) {
+          const idx = naturals.findIndex(c => c.id === card.id);
+          if (idx !== -1) naturals.splice(idx, 1);
+        }
+      }
+    });
+  }
+
+  // 6. Attach any remaining jokers to existing 3, 4, or 5-card melds (up to 6 cards)
   while (jokers.length > 0 && melds.length > 0) {
-    const targetMeld = melds.find(m => m.length === 3);
+    const targetMeld = melds.find(m => m.length >= 3 && m.length < 6);
     if (targetMeld) {
       targetMeld.push(jokers.pop()!);
     } else {
