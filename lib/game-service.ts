@@ -31,6 +31,8 @@ import {
   TOSS_RANK_VALUE,
   validateDeclaration,
   calculateLossPoints,
+  isValidSet,
+  findBestMelds,
 } from './rummy-engine';
 import { handleFirestoreError, OperationType } from './firebase-error';
 
@@ -1383,6 +1385,94 @@ async function creditWinnerPayout(
 }
 
 /**
+ * Automatically deducts loss amount and records transaction for losing players
+ * "हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है" -> Ensures losing players have money deducted and recorded in wallet.
+ */
+export async function settleLoserLoss(
+  gameId: string,
+  gameMode: string,
+  loserUid: string,
+  lossPoints: number,
+  pointValue: number,
+  entryFee: number,
+  entryPaid: number = 0
+): Promise<number> {
+  if (!loserUid || loserUid.startsWith('bot_')) return 0;
+
+  // Monetary loss for points rummy: lossPoints * pointValue
+  // Capped at entryFee if entryFee > 0, else max 80 * pointValue
+  const maxCap = entryFee > 0 ? entryFee : 80 * (pointValue || 1);
+  const calculatedLoss = Math.min(maxCap, Math.max(1, Math.round(lossPoints * (pointValue || 1) * 100) / 100));
+  const finalLossAmount = calculatedLoss > 0 ? calculatedLoss : (entryFee > 0 ? entryFee : 20);
+
+  try {
+    const loserWalletRef = doc(db, 'wallets', loserUid);
+    const wSnap = await getDoc(loserWalletRef);
+    if (!wSnap.exists()) return finalLossAmount;
+    const wData = wSnap.data() as UserWallet;
+
+    if (entryPaid > 0) {
+      // Player paid entryFee up front (e.g. ₹20 or ₹160).
+      // If actual loss is less than buy-in, refund the difference!
+      const refund = Math.max(0, Math.round((entryPaid - finalLossAmount) * 100) / 100);
+      if (refund > 0) {
+        await updateDoc(loserWalletRef, {
+          depositBalance: (wData.depositBalance || 0) + refund,
+          updatedAt: new Date().toISOString(),
+        });
+        const refundTxRef = doc(collection(db, 'transactions'));
+        await setDoc(refundTxRef, {
+          id: refundTxRef.id,
+          uid: loserUid,
+          type: 'refund',
+          amount: refund,
+          status: 'completed',
+          description: `Partial loss refund for match #${gameId.slice(-6)} (Saved ₹${refund} from ₹${entryPaid} buy-in)`,
+          referenceId: gameId,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      // Entry fee was NOT deducted yet (e.g. practice bot or direct table join):
+      // Deduct finalLossAmount directly from wallet!
+      const curDep = wData.depositBalance || 0;
+      const curBonus = wData.bonusBalance || 0;
+      const curWin = wData.winBalance || 0;
+
+      const depDeduct = Math.min(curDep, finalLossAmount);
+      const rem1 = finalLossAmount - depDeduct;
+      const bonusDeduct = Math.min(curBonus, rem1);
+      const winDeduct = Math.min(curWin, rem1 - bonusDeduct);
+
+      await updateDoc(loserWalletRef, {
+        depositBalance: Math.max(0, curDep - depDeduct),
+        bonusBalance: Math.max(0, curBonus - bonusDeduct),
+        winBalance: Math.max(0, curWin - winDeduct),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    // Always record game_loss transaction for clear audit and ledger display
+    const lossTxRef = doc(collection(db, 'transactions'));
+    await setDoc(lossTxRef, {
+      id: lossTxRef.id,
+      uid: loserUid,
+      type: 'game_loss',
+      amount: -finalLossAmount,
+      status: 'completed',
+      description: `Loss in ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (${lossPoints} Pts penalty, -₹${finalLossAmount})`,
+      referenceId: gameId,
+      createdAt: new Date().toISOString(),
+    });
+
+    return finalLossAmount;
+  } catch (err) {
+    console.error(`Error settling loser loss for ${loserUid}:`, err);
+    return finalLossAmount;
+  }
+}
+
+/**
  * Handle turn timeout with 60s -> 5s -> 5s -> Auto Drop
  */
 export async function handleTurnTimeout(gameId: string, currentTurnUid: string): Promise<void> {
@@ -1517,6 +1607,27 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
       winnerToCredit.playerNetShare,
       winnerToCredit.pointsWon
     );
+
+    try {
+      const pSnap = await getDocs(playersRef);
+      for (const d of pSnap.docs) {
+        const pData = d.data() as GamePlayerState;
+        if (pData.uid !== winnerToCredit.winnerUid && !pData.isBot) {
+          const lossPts = pData.score || 40;
+          await settleLoserLoss(
+            gameId,
+            winnerToCredit.gameMode,
+            pData.uid,
+            lossPts,
+            1,
+            20,
+            pData.entryPaid || 0
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('Error settling timeout losses:', e);
+    }
   }
 }
 
@@ -1646,6 +1757,27 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       winnerToCredit.playerNetShare,
       winnerToCredit.pointsWon
     );
+
+    try {
+      const pSnap = await getDocs(playersRef);
+      for (const d of pSnap.docs) {
+        const pData = d.data() as GamePlayerState;
+        if (pData.uid !== winnerToCredit.winnerUid && !pData.isBot) {
+          const lossPts = pData.score || 20;
+          await settleLoserLoss(
+            gameId,
+            winnerToCredit.gameMode,
+            pData.uid,
+            lossPts,
+            1,
+            20,
+            pData.entryPaid || 0
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('Error settling drop losses:', e);
+    }
   }
 }
 
@@ -1694,8 +1826,14 @@ export async function declareHand(
         totalPointsLost += lossPts;
       }
     }
-    // Winner's score tracks points won
-    scores[playerUid] = totalPointsLost;
+    // 20 points per set requirement:
+    // "और हर सेट पर पॉइंट्स मिलेंगे। जो भी एक सेट पर मिलेगा, एक सेट पर 20 पॉइंट्स मिलेंगे।"
+    const winnerSets = cardGroups.filter((g) => isValidSet(g, wildJokerRank)).length;
+    const winnerSetPoints = winnerSets * 20;
+    const totalWinnerPoints = totalPointsLost + winnerSetPoints;
+
+    // Winner's score tracks points won + set bonus
+    scores[playerUid] = totalWinnerPoints;
 
     // Gross winnings calculation based on total table prize pot (or points value if higher)
     const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
@@ -1723,6 +1861,8 @@ export async function declareHand(
         adminShare,
         playerNetShare,
         payouts,
+        winnerSets,
+        winnerSetPoints,
         settlementStatus: 'completed',
         completedAt: new Date().toISOString(),
       },
@@ -1734,7 +1874,7 @@ export async function declareHand(
       score: 0,
     });
 
-    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings and loyalty points
+    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings and loyalty points (including 20 pts per set)
     if (playerNetShare > 0) {
       await creditWinnerPayout(
         gameId,
@@ -1743,8 +1883,44 @@ export async function declareHand(
         grossWin,
         platformFee,
         playerNetShare,
-        totalPointsLost
+        totalWinnerPoints
       );
+    }
+
+    // Automatically deduct money from all losers & award set points:
+    // "हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है"
+    for (const p of allPlayers) {
+      if (p.uid !== playerUid && !p.isBot) {
+        const lossPts = scores[p.uid] || 20;
+        await settleLoserLoss(
+          gameId,
+          game.mode,
+          p.uid,
+          lossPts,
+          game.pointValue || 1,
+          game.entryFee || 20,
+          p.entryPaid || 0
+        );
+
+        // Award 20 points per set for any valid sets formed by loser
+        const loserMelds = findBestMelds(p.cards || [], wildJokerRank);
+        const loserSets = loserMelds.filter((g) => isValidSet(g, wildJokerRank)).length;
+        if (loserSets > 0) {
+          const loserSetPoints = loserSets * 20;
+          try {
+            const lWalletRef = doc(db, 'wallets', p.uid);
+            const lSnap = await getDoc(lWalletRef);
+            if (lSnap.exists()) {
+              await updateDoc(lWalletRef, {
+                rewardPoints: (lSnap.data().rewardPoints || 0) + loserSetPoints,
+                updatedAt: new Date().toISOString(),
+              });
+            }
+          } catch (e) {
+            console.warn('Set points reward error:', e);
+          }
+        }
+      }
     }
 
     return validation;

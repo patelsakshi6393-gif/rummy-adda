@@ -78,7 +78,23 @@ export default function GameRoomPage() {
   const [players, setPlayers] = useState<GamePlayerState[]>([]);
   const [myPlayer, setMyPlayer] = useState<GamePlayerState | null>(null);
   const [playersLoaded, setPlayersLoaded] = useState(false);
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  // Multiple card selection & grouping for Sets
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
+  const selectedCardId = selectedCardIds[0] || null;
+  const setSelectedCardId = (id: string | null) => setSelectedCardIds(id ? [id] : []);
+  const [handGroups, setHandGroups] = useState<Card[][]>([]);
+  const [draggedCardInfo, setDraggedCardInfo] = useState<{
+    cardId: string;
+    fromGroupIdx: number;
+    fromCardIdx: number;
+  } | null>(null);
+  const [dragOverGroupIdx, setDragOverGroupIdx] = useState<number | null>(null);
+  const [toastNotification, setToastNotification] = useState<string | null>(null);
+  const [touchDragCard, setTouchDragCard] = useState<{
+    cardId: string;
+    fromGroupIdx: number;
+    fromCardIdx: number;
+  } | null>(null);
 
   // Time remaining on active turn (seconds)
   const [turnTimeLeft, setTurnTimeLeft] = useState<number>(45);
@@ -327,25 +343,271 @@ export default function GameRoomPage() {
     }
   }, [game?.status, game?.resultData, game?.winnerUid, user?.uid]);
 
+  // Synchronize player hand groups when myPlayer?.cards updates
+  useEffect(() => {
+    if (!myPlayer?.cards || myPlayer.cards.length === 0) {
+      setHandGroups([]);
+      return;
+    }
+
+    const currentCards = myPlayer.cards;
+    const flatCurrent = handGroups.flat();
+    const currentIds = new Set(currentCards.map((c) => c.id));
+    const flatIds = new Set(flatCurrent.map((c) => c.id));
+
+    const needsSync =
+      currentCards.length !== flatCurrent.length ||
+      currentCards.some((c) => !flatIds.has(c.id));
+
+    if (needsSync) {
+      if (handGroups.length === 0) {
+        const initial = findBestMelds(currentCards, wildJokerRank);
+        setHandGroups(initial.length > 0 ? initial : [currentCards]);
+      } else {
+        const pruned = handGroups
+          .map((grp) => grp.filter((c) => currentIds.has(c.id)))
+          .filter((grp) => grp.length > 0);
+
+        const prunedIds = new Set(pruned.flat().map((c) => c.id));
+        const newDrawn = currentCards.filter((c) => !prunedIds.has(c.id));
+
+        if (newDrawn.length > 0) {
+          if (pruned.length > 0) {
+            pruned[pruned.length - 1] = [...pruned[pruned.length - 1], ...newDrawn];
+          } else {
+            pruned.push(newDrawn);
+          }
+        }
+        setHandGroups(pruned);
+      }
+    }
+  }, [myPlayer?.cards, wildJokerRank]);
+
+  // Toggle card selection on tap
+  const toggleSelectCard = (cardId: string) => {
+    setSelectedCardIds((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
+    );
+  };
+
+  // Group selected cards into a Set / Group
+  // "तीन कार्ड सेलेक्ट करेंगे, सेट का ऑप्शन मिल जाएगा, सेट कर लेंगे कार्ड। इससे हम सेट्स बना सकते हैं।"
+  const handleCreateSetFromSelection = () => {
+    if (selectedCardIds.length === 0) return;
+
+    const selectedCardsList: Card[] = [];
+    const remainingGroups = handGroups
+      .map((grp) =>
+        grp.filter((c) => {
+          if (selectedCardIds.includes(c.id)) {
+            selectedCardsList.push(c);
+            return false;
+          }
+          return true;
+        })
+      )
+      .filter((grp) => grp.length > 0);
+
+    if (selectedCardsList.length > 0) {
+      const updated = [...remainingGroups, selectedCardsList];
+      setHandGroups(updated);
+      setSelectedCardIds([]);
+      soundManager.playCardDraw();
+
+      const isSet = isValidSet(selectedCardsList, wildJokerRank);
+      if (isSet) {
+        setToastNotification('🎉 Valid Set Created! +20 Points Earned!');
+        setTimeout(() => setToastNotification(null), 3500);
+      } else {
+        setToastNotification(`Group of ${selectedCardsList.length} cards formed!`);
+        setTimeout(() => setToastNotification(null), 2500);
+      }
+
+      if (myPlayer) {
+        const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
+        updateDoc(pRef, { cards: updated.flat() });
+      }
+    }
+  };
+
+  // Dissolve/ungroup a group
+  const handleUngroup = (groupIdx: number) => {
+    if (handGroups.length <= 1) return;
+    const targetGroup = handGroups[groupIdx];
+    const otherGroups = handGroups.filter((_, idx) => idx !== groupIdx);
+    if (otherGroups.length > 0) {
+      otherGroups[0] = [...otherGroups[0], ...targetGroup];
+    }
+    setHandGroups(otherGroups);
+    soundManager.playCardDraw();
+    if (myPlayer) {
+      const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
+      updateDoc(pRef, { cards: otherGroups.flat() });
+    }
+  };
+
+  // Move card between groups or reorder within group
+  // "कार्ड को उठाकर अपने आप दूसरी साइड प्लेस कर सकते हैं। दूसरे कार्ड को उठाकर दूसरी साइड प्लेस कर सकते हैं।"
+  const moveCardBetweenGroups = (
+    fromGroupIdx: number,
+    fromCardIdx: number,
+    toGroupIdx: number,
+    toCardIdx?: number
+  ) => {
+    if (fromGroupIdx < 0 || fromGroupIdx >= handGroups.length) return;
+    const sourceGroup = [...handGroups[fromGroupIdx]];
+    const [cardToMove] = sourceGroup.splice(fromCardIdx, 1);
+    if (!cardToMove) return;
+
+    const newGroups = [...handGroups];
+
+    if (toGroupIdx === -1) {
+      // Create new group on the side
+      newGroups[fromGroupIdx] = sourceGroup;
+      newGroups.push([cardToMove]);
+    } else if (toGroupIdx === fromGroupIdx) {
+      // Reordering within the same group
+      const targetIdx = typeof toCardIdx === 'number' ? toCardIdx : sourceGroup.length;
+      sourceGroup.splice(targetIdx, 0, cardToMove);
+      newGroups[fromGroupIdx] = sourceGroup;
+    } else {
+      // Move to another group
+      newGroups[fromGroupIdx] = sourceGroup;
+      const targetGroup = [...(newGroups[toGroupIdx] || [])];
+      const targetIdx = typeof toCardIdx === 'number' ? toCardIdx : targetGroup.length;
+      targetGroup.splice(targetIdx, 0, cardToMove);
+      newGroups[toGroupIdx] = targetGroup;
+    }
+
+    const filtered = newGroups.filter((g) => g.length > 0);
+    setHandGroups(filtered);
+    soundManager.playCardDraw();
+
+    if (myPlayer) {
+      const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
+      updateDoc(pRef, { cards: filtered.flat() });
+    }
+  };
+
+  // Move selected card to left side or right side
+  const handleMoveSelectedCard = (direction: 'left' | 'right') => {
+    if (selectedCardIds.length !== 1) return;
+    const cardId = selectedCardIds[0];
+    let foundGroupIdx = -1;
+    let foundCardIdx = -1;
+
+    for (let g = 0; g < handGroups.length; g++) {
+      const cIdx = handGroups[g].findIndex((c) => c.id === cardId);
+      if (cIdx !== -1) {
+        foundGroupIdx = g;
+        foundCardIdx = cIdx;
+        break;
+      }
+    }
+
+    if (foundGroupIdx === -1) return;
+
+    if (direction === 'left') {
+      if (foundCardIdx > 0) {
+        moveCardBetweenGroups(foundGroupIdx, foundCardIdx, foundGroupIdx, foundCardIdx - 1);
+      } else if (foundGroupIdx > 0) {
+        moveCardBetweenGroups(foundGroupIdx, foundCardIdx, foundGroupIdx - 1);
+      }
+    } else {
+      const curLen = handGroups[foundGroupIdx].length;
+      if (foundCardIdx < curLen - 1) {
+        moveCardBetweenGroups(foundGroupIdx, foundCardIdx, foundGroupIdx, foundCardIdx + 1);
+      } else if (foundGroupIdx < handGroups.length - 1) {
+        moveCardBetweenGroups(foundGroupIdx, foundCardIdx, foundGroupIdx + 1, 0);
+      } else {
+        moveCardBetweenGroups(foundGroupIdx, foundCardIdx, -1);
+      }
+    }
+  };
+
+  // Drag and Drop handlers
+  const handleDragStartCard = (
+    e: React.DragEvent,
+    cardId: string,
+    fromGroupIdx: number,
+    fromCardIdx: number
+  ) => {
+    e.dataTransfer.setData('text/plain', cardId);
+    setDraggedCardInfo({ cardId, fromGroupIdx, fromCardIdx });
+  };
+
+  const handleDragOverGroup = (e: React.DragEvent, groupIdx: number) => {
+    e.preventDefault();
+    setDragOverGroupIdx(groupIdx);
+  };
+
+  const handleDropOnGroup = (e: React.DragEvent, toGroupIdx: number) => {
+    e.preventDefault();
+    setDragOverGroupIdx(null);
+    if (!draggedCardInfo) return;
+    moveCardBetweenGroups(
+      draggedCardInfo.fromGroupIdx,
+      draggedCardInfo.fromCardIdx,
+      toGroupIdx
+    );
+    setDraggedCardInfo(null);
+  };
+
+  // Touch drag and drop handlers for mobile devices
+  const handleTouchStartCard = (
+    cardId: string,
+    fromGroupIdx: number,
+    fromCardIdx: number
+  ) => {
+    setTouchDragCard({ cardId, fromGroupIdx, fromCardIdx });
+  };
+
+  const handleTouchEndCard = (e: React.TouchEvent) => {
+    if (!touchDragCard) return;
+    const touch = e.changedTouches[0];
+    const elem = document.elementFromPoint(touch.clientX, touch.clientY);
+    const dropTarget = elem?.closest('[data-drop-group]');
+    if (dropTarget) {
+      const targetGroup = parseInt(dropTarget.getAttribute('data-drop-group') || '0', 10);
+      moveCardBetweenGroups(
+        touchDragCard.fromGroupIdx,
+        touchDragCard.fromCardIdx,
+        targetGroup
+      );
+    }
+    setTouchDragCard(null);
+  };
+
   // Open Declare Modal with grouped hand
   const handleOpenDeclare = () => {
     if (!myPlayer?.cards || myPlayer.cards.length === 0) return;
-    const cards = [...myPlayer.cards];
+    const cards = handGroups.flat().length > 0 ? handGroups.flat() : [...myPlayer.cards];
     let finishCard: Card | null = null;
     let meldCards = cards;
 
     // In 13-card Indian Rummy, declaring requires exactly 13 cards.
     // If the player has drawn (14 cards in hand), 1 card is discarded to the finish slot.
     if (cards.length >= 14) {
-      const selIdx = selectedCardId ? cards.findIndex((c) => c.id === selectedCardId) : -1;
+      const selIdx = selectedCardIds.length > 0 ? cards.findIndex((c) => c.id === selectedCardIds[0]) : -1;
       const finishIdx = selIdx !== -1 ? selIdx : cards.length - 1;
       finishCard = cards[finishIdx];
       meldCards = cards.filter((_, idx) => idx !== finishIdx);
     }
 
     setDeclareFinishCard(finishCard);
-    const bestMelds = findBestMelds(meldCards, wildJokerRank);
-    setDeclareGroups(bestMelds);
+
+    // Check if player's current groups form 13 cards
+    const userGroupsWithoutFinish = handGroups
+      .map((g) => (finishCard ? g.filter((c) => c.id !== finishCard.id) : g))
+      .filter((g) => g.length > 0);
+    const totalCount = userGroupsWithoutFinish.reduce((acc, g) => acc + g.length, 0);
+
+    if (totalCount === 13 && userGroupsWithoutFinish.length >= 2) {
+      setDeclareGroups(userGroupsWithoutFinish);
+    } else {
+      const bestMelds = findBestMelds(meldCards, wildJokerRank);
+      setDeclareGroups(bestMelds);
+    }
     setShowDeclareModal(true);
   };
 
@@ -390,8 +652,9 @@ export default function GameRoomPage() {
   };
 
   const handleDiscard = async () => {
-    if (!game || !user || !isMyTurn || !hasDrawn || !selectedCardId || actionLoading) return;
-    const cardObj = myPlayer?.cards?.find((c) => c.id === selectedCardId);
+    if (!game || !user || !isMyTurn || !hasDrawn || selectedCardIds.length === 0 || actionLoading) return;
+    const cardIdToDiscard = selectedCardIds[0];
+    const cardObj = myPlayer?.cards?.find((c) => c.id === cardIdToDiscard);
     if (!cardObj) return;
 
     setActionLoading(true);
@@ -399,7 +662,7 @@ export default function GameRoomPage() {
     try {
       soundManager.playCardDiscard();
       await discardCard(game.gameId, user.uid, cardObj);
-      setSelectedCardId(null);
+      setSelectedCardIds([]);
     } catch (err: unknown) {
       setErrorToast(err instanceof Error ? err.message : String(err));
     } finally {
@@ -424,15 +687,14 @@ export default function GameRoomPage() {
 
   const handleAutoSortHand = () => {
     if (!myPlayer?.cards) return;
-    const sorted = [...myPlayer.cards].sort((a, b) => {
-      if (a.suit !== b.suit) return a.suit.localeCompare(b.suit);
-      return a.rank.localeCompare(b.rank);
-    });
-
+    const sortedMelds = findBestMelds(myPlayer.cards, wildJokerRank);
+    const validMelds = sortedMelds.length > 0 ? sortedMelds : [myPlayer.cards];
+    setHandGroups(validMelds);
+    setSelectedCardIds([]);
+    soundManager.playCardDraw();
     if (myPlayer) {
       const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
-      updateDoc(pRef, { cards: sorted });
-      soundManager.playCardDraw();
+      updateDoc(pRef, { cards: validMelds.flat() });
     }
   };
 
@@ -668,9 +930,9 @@ export default function GameRoomPage() {
                 </div>
 
                 {/* 
-                  2. CENTER TABLE AREA (Waiting state / 15s Countdown / Playing Decks)
+                  2. CENTER TABLE AREA (Waiting state / 15s Countdown / Playing Decks - Shifted Upward)
                 */}
-                <div className="flex-1 flex items-center justify-center gap-3 sm:gap-6 md:gap-10 relative z-10 my-0.5 min-h-0">
+                <div className="flex-1 flex items-center justify-center gap-3 sm:gap-6 md:gap-10 relative z-10 my-0.5 min-h-0 -translate-y-3 sm:-translate-y-5 md:-translate-y-7">
                   {/* WAITING ROOM (when waiting for real players) */}
                   {game?.status === 'WAITING' && (
                     <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-4 sm:py-6 rounded-2xl sm:rounded-3xl text-center space-y-3.5 shadow-2xl max-w-sm sm:max-w-md w-full">
@@ -777,6 +1039,13 @@ export default function GameRoomPage() {
                   3. BOTTOM AREA (Your Seat, Hand Cards, Turn Timer & Action Bar)
                 */}
                 <div className="w-full relative z-30 shrink-0 flex flex-col items-center gap-1 pb-1">
+                  {/* Floating Toast Notification */}
+                  {toastNotification && (
+                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black text-xs px-4 py-1.5 rounded-full shadow-2xl animate-bounce border border-yellow-200">
+                      {toastNotification}
+                    </div>
+                  )}
+
                   {/* Turn Status Message */}
                   {game?.status === 'PLAYING' && (
                     <div className="w-full max-w-md flex flex-col items-center gap-0.5">
@@ -810,12 +1079,173 @@ export default function GameRoomPage() {
                     </div>
                   )}
 
-                  {/* Player Hand Cards with Wild Joker Indication */}
-                  {myPlayer?.cards && myPlayer.cards.length > 0 && (
-                    <div className="flex items-center justify-center -space-x-3 sm:-space-x-3.5 max-w-full overflow-x-auto py-0.5 px-2">
+                  {/* Multi-Card Selection Actions Floating Bar */}
+                  {/* "तीन कार्ड सेलेक्ट करेंगे, सेट का ऑप्शन मिल जाएगा, सेट कर लेंगे कार्ड।" */}
+                  {selectedCardIds.length >= 2 && (
+                    <div className="flex items-center gap-2 mb-0.5 animate-bounce z-40">
+                      <button
+                        onClick={handleCreateSetFromSelection}
+                        className="py-1 px-4 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black text-xs uppercase shadow-xl ring-2 ring-amber-300 flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                      >
+                        <span>✨</span>
+                        <span>CREATE SET / GROUP ({selectedCardIds.length} Cards)</span>
+                      </button>
+                      <button
+                        onClick={() => setSelectedCardIds([])}
+                        className="py-1 px-2.5 rounded-full bg-black/70 hover:bg-black/90 text-slate-300 text-[10px] font-bold border border-white/20"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Single Card Quick Movement Actions Bar */}
+                  {/* "कार्ड को उठाकर अपने आप दूसरी साइड प्लेस कर सकते हैं।" */}
+                  {selectedCardIds.length === 1 && (
+                    <div className="flex items-center gap-1.5 mb-0.5 z-40 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-amber-500/30 shadow-lg text-[10px]">
+                      <button
+                        onClick={() => handleMoveSelectedCard('left')}
+                        className="py-0.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5"
+                        title="Move card left side"
+                      >
+                        <span>← Left</span>
+                      </button>
+                      <button
+                        onClick={() => handleMoveSelectedCard('right')}
+                        className="py-0.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5"
+                        title="Move card right side"
+                      >
+                        <span>Right →</span>
+                      </button>
+                      <button
+                        onClick={() => moveCardBetweenGroups(-1, 0, -1)}
+                        className="py-0.5 px-2 rounded-lg bg-amber-500/25 hover:bg-amber-500/40 text-amber-300 font-bold border border-amber-500/30"
+                        title="Create new group with this card"
+                      >
+                        <span>+ New Side Group</span>
+                      </button>
+                      <button
+                        onClick={() => setSelectedCardIds([])}
+                        className="py-0.5 px-1.5 rounded-lg text-slate-400 hover:text-white text-[9px]"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Player Hand Groups Spread Across Full Width of Screen */}
+                  {/* "और जो कार्ड है, वो पूरी स्क्रीन में फैले-फैले दिखाई दे" */}
+                  {handGroups.length > 0 && (
+                    <div className="w-full max-w-7xl px-2 sm:px-4 md:px-6 flex items-end justify-between sm:justify-around gap-1.5 sm:gap-3 overflow-x-auto py-1">
+                      {handGroups.map((group, groupIdx) => {
+                        const isPure = isPureSequence(group, wildJokerRank);
+                        const isSet = isValidSet(group, wildJokerRank);
+                        const isImpure = isImpureSequence(group, wildJokerRank);
+                        const isOver = dragOverGroupIdx === groupIdx;
+
+                        return (
+                          <div
+                            key={`group-${groupIdx}`}
+                            data-drop-group={groupIdx}
+                            onDragOver={(e) => handleDragOverGroup(e, groupIdx)}
+                            onDragLeave={() => setDragOverGroupIdx(null)}
+                            onDrop={(e) => handleDropOnGroup(e, groupIdx)}
+                            className={`relative rounded-xl sm:rounded-2xl p-1 sm:p-1.5 transition-all duration-200 flex flex-col items-center gap-1 ${
+                              isOver
+                                ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105'
+                                : isSet
+                                ? 'bg-amber-500/10 border border-amber-400/50 shadow-lg shadow-amber-500/15'
+                                : isPure
+                                ? 'bg-emerald-500/10 border border-emerald-500/40'
+                                : isImpure
+                                ? 'bg-teal-500/10 border border-teal-500/40'
+                                : 'bg-black/40 border border-white/10'
+                            }`}
+                          >
+                            {/* Group Header Badge */}
+                            <div className="flex items-center justify-between w-full px-1 gap-1 text-[8px] sm:text-[9px] font-bold">
+                              <span className="text-slate-400 font-mono">G{groupIdx + 1}</span>
+                              {isSet ? (
+                                <span className="px-1.5 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[8px] sm:text-[9px] shadow flex items-center gap-0.5">
+                                  <span>⭐</span> SET (+20 Pts)
+                                </span>
+                              ) : isPure ? (
+                                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[8px] sm:text-[9px] font-black">
+                                  ✓ PURE SEQ
+                                </span>
+                              ) : isImpure ? (
+                                <span className="px-1.5 py-0.2 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[8px] sm:text-[9px] font-black">
+                                  IMPURE SEQ
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 text-[8px]">Group</span>
+                              )}
+                              {handGroups.length > 1 && (
+                                <button
+                                  onClick={() => handleUngroup(groupIdx)}
+                                  className="text-slate-500 hover:text-rose-400 text-[8px] transition-colors ml-1"
+                                  title="Ungroup cards"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Cards in Group - Generously Spread Out */}
+                            <div className="flex items-center -space-x-2 sm:-space-x-1.5 md:space-x-0.5 overflow-visible px-0.5 py-0.5">
+                              {group.map((card, cardIdx) => {
+                                const isWild = card.rank === wildJokerRank;
+                                const isSelected = selectedCardIds.includes(card.id);
+
+                                return (
+                                  <div
+                                    key={card.id}
+                                    className="relative group/c shrink-0"
+                                    draggable={true}
+                                    onDragStart={(e) => handleDragStartCard(e, card.id, groupIdx, cardIdx)}
+                                    onTouchStart={() => handleTouchStartCard(card.id, groupIdx, cardIdx)}
+                                    onTouchEnd={handleTouchEndCard}
+                                  >
+                                    {isWild && (
+                                      <span className="absolute -top-2 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[8px] px-1 py-0.2 rounded shadow">
+                                        JOKER
+                                      </span>
+                                    )}
+                                    <PlayingCard
+                                      card={card}
+                                      wildJokerRank={wildJokerRank}
+                                      isSelected={isSelected}
+                                      onClick={() => toggleSelectCard(card.id)}
+                                      size="hand"
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Drop Target to Create New Side Group */}
+                      <div
+                        data-drop-group={-1}
+                        onDragOver={(e) => handleDragOverGroup(e, -1)}
+                        onDrop={(e) => handleDropOnGroup(e, -1)}
+                        className="rounded-xl border border-dashed border-white/20 hover:border-amber-400/60 p-2 flex flex-col items-center justify-center text-[8px] text-slate-500 hover:text-amber-300 cursor-pointer h-14 sm:h-16 shrink-0 transition-colors"
+                        title="Drag and drop card here to place on the other side as a new group"
+                      >
+                        <span className="text-sm font-bold">+</span>
+                        <span>Side Group</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fallback Single Flat Hand if handGroups empty */}
+                  {handGroups.length === 0 && myPlayer?.cards && myPlayer.cards.length > 0 && (
+                    <div className="flex items-center justify-center -space-x-2 sm:-space-x-1.5 max-w-full overflow-x-auto py-0.5 px-2">
                       {myPlayer.cards.map((card) => {
                         const isWild = card.rank === wildJokerRank;
-                        const isSelected = selectedCardId === card.id;
+                        const isSelected = selectedCardIds.includes(card.id);
                         return (
                           <div key={card.id} className="relative group shrink-0">
                             {isWild && (
@@ -827,7 +1257,7 @@ export default function GameRoomPage() {
                               card={card}
                               wildJokerRank={wildJokerRank}
                               isSelected={isSelected}
-                              onClick={() => setSelectedCardId(isSelected ? null : card.id)}
+                              onClick={() => toggleSelectCard(card.id)}
                               size="hand"
                             />
                           </div>
@@ -838,22 +1268,38 @@ export default function GameRoomPage() {
 
                   {/* Action Controls Bar - Solid Dock with Fixed Visibility */}
                   {game?.status === 'PLAYING' && (
-                    <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 py-1 px-3 bg-black/85 backdrop-blur-md rounded-xl sm:rounded-2xl border border-amber-500/40 shadow-2xl shrink-0 z-40 my-0.5">
+                    <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 py-1 px-3 bg-black/85 backdrop-blur-md rounded-xl sm:rounded-2xl border border-amber-500/40 shadow-2xl shrink-0 z-40 my-0.5 flex-wrap">
                       <button
                         onClick={handleAutoSortHand}
                         className="py-1 px-2.5 sm:py-1.5 sm:px-3 rounded-lg sm:rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] sm:text-xs transition-colors flex items-center gap-1"
-                        title="Sort cards by suit and rank"
+                        title="Sort cards into best melds"
                       >
                         <Sparkles className="w-3 h-3 text-amber-400" />
                         <span>SORT</span>
                       </button>
+
+                      {/* Live Sets Made Bonus Counter */}
+                      {/* "और हर सेट पर पॉइंट्स मिलेंगे। जो भी एक सेट पर मिलेगा, एक सेट पर 20 पॉइंट्स मिलेंगे।" */}
+                      <div
+                        className="py-0.5 px-2 sm:py-1 sm:px-2.5 rounded-lg sm:rounded-xl bg-amber-500/15 border border-amber-500/30 text-[10px] sm:text-xs flex items-center gap-1 font-bold text-amber-300"
+                        title="Every completed set gives +20 Points!"
+                      >
+                        <span>⭐</span>
+                        <span className="hidden xs:inline text-slate-300">Sets:</span>
+                        <span className="font-mono font-black text-amber-300">
+                          {handGroups.filter((g) => isValidSet(g, wildJokerRank)).length}
+                        </span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          (+{handGroups.filter((g) => isValidSet(g, wildJokerRank)).length * 20} Pts)
+                        </span>
+                      </div>
 
                       {/* Live Hand Penalty Score & Explanatory Button */}
                       <button
                         type="button"
                         onClick={() => setShowHowToPlayModal(true)}
                         className="py-0.5 px-2 sm:py-1 sm:px-2.5 rounded-lg sm:rounded-xl bg-black/80 border border-amber-500/30 hover:border-amber-400 text-[10px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                        title="In Rummy, points are penalties! Goal is 0 Points to win. Click to learn how to play."
+                        title="In Rummy, unmatched cards are penalty points! Click to learn."
                       >
                         <span className="text-slate-400 text-[9px] sm:text-[11px]">Penalty:</span>
                         <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -866,9 +1312,9 @@ export default function GameRoomPage() {
 
                       <button
                         onClick={handleDiscard}
-                        disabled={!isMyTurn || !hasDrawn || !selectedCardId || actionLoading}
+                        disabled={!isMyTurn || !hasDrawn || selectedCardIds.length === 0 || actionLoading}
                         className={`py-1 px-3 sm:py-1.5 sm:px-4 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow-md transition-all active:scale-95 ${
-                          isMyTurn && hasDrawn && selectedCardId
+                          isMyTurn && hasDrawn && selectedCardIds.length > 0
                             ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
                             : 'bg-white/10 text-slate-400 cursor-not-allowed opacity-50'
                         }`}
@@ -1085,6 +1531,11 @@ export default function GameRoomPage() {
                 {players.map((p) => {
                   const isWinner = p.uid === game.winnerUid;
                   const pts = game.resultData?.scores[p.uid] ?? p.score ?? 0;
+                  const loserMoneyLoss = Math.min(
+                    game.entryFee || 80 * (game.pointValue || 1),
+                    Math.max(1, Math.round(pts * (game.pointValue || 1) * 100) / 100)
+                  );
+
                   return (
                     <div key={p.uid} className="py-2.5 flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
@@ -1110,12 +1561,33 @@ export default function GameRoomPage() {
                           <span className="text-[11px] text-amber-300 font-bold block">
                             +₹{game.resultData.payouts[p.uid].toLocaleString('en-IN')} Credited to Winnings!
                           </span>
-                        ) : null}
+                        ) : (
+                          <span className="text-[11px] text-rose-400 font-bold block">
+                            -₹{loserMoneyLoss.toLocaleString('en-IN')} Deducted from Wallet
+                          </span>
+                        )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+
+              {/* Loser wallet deduction confirmation banner */}
+              {/* "मैंने देखा कि हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है" */}
+              {game.winnerUid !== user?.uid && (
+                <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-3 text-xs text-rose-300 text-left flex items-center gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                  <div>
+                    <p className="font-bold text-white">Loss Settled & Deducted</p>
+                    <p className="text-[11px] text-slate-300">
+                      ₹{Math.min(
+                        game.entryFee || 80 * (game.pointValue || 1),
+                        Math.max(1, Math.round(((game.resultData?.scores[user?.uid || ''] ?? myPlayer?.score ?? 20)) * (game.pointValue || 1) * 100) / 100)
+                      )} deducted from your wallet for this match.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Winning Amount & 14% Platform Fee Breakdown */}
               {game.resultData && (game.resultData.grossWin || 0) > 0 && (
@@ -1126,6 +1598,14 @@ export default function GameRoomPage() {
                       +{(game.winnerUid && game.resultData.scores[game.winnerUid]) || (game.resultData.winnerUid && game.resultData.scores[game.resultData.winnerUid]) || 0} Points
                     </span>
                   </div>
+                  {Boolean(game.resultData?.winnerSetPoints && game.resultData.winnerSetPoints > 0) && (
+                    <div className="flex items-center justify-between text-amber-300 text-[11px]">
+                      <span>⭐ Set Bonus Points:</span>
+                      <span className="font-mono font-bold">
+                        +{game.resultData.winnerSetPoints} Pts ({game.resultData.winnerSets} sets × 20 Pts)
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between font-bold text-slate-300">
                     <span>Total Winning Pot:</span>
                     <span className="font-mono text-white">₹{game.resultData.grossWin?.toLocaleString('en-IN')}</span>

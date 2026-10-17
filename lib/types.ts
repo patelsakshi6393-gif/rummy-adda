@@ -168,6 +168,8 @@ export interface GameState {
     feePercent?: number; // 14%
     playerNetShare?: number; // Net winnings credited to winner wallet
     adminShare?: number;
+    winnerSets?: number;
+    winnerSetPoints?: number;
     settlementStatus?: string;
     completedAt: string;
   };

@@ -10,6 +10,13 @@ interface PlayingCardProps {
   onClick?: () => void;
   size?: 'sm' | 'md' | 'lg' | 'hand';
   disabled?: boolean;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onTouchStart?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchMove?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchEnd?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  className?: string;
 }
 
 export function PlayingCard({
@@ -19,6 +26,13 @@ export function PlayingCard({
   onClick,
   size = 'md',
   disabled,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
+  className = '',
 }: PlayingCardProps) {
   const isWild = wildJokerRank && card.rank === wildJokerRank && !card.isPrintedJoker;
   const isJoker = card.isPrintedJoker || card.rank === 'JOKER';
@@ -45,6 +59,12 @@ export function PlayingCard({
   return (
     <div
       onClick={disabled ? undefined : onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
       className={`
         relative select-none transition-all duration-150 transform cursor-pointer
         ${sizeClasses[size]}
@@ -52,6 +72,7 @@ export function PlayingCard({
         ${disabled ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : ''}
         bg-gradient-to-b from-amber-50 via-white to-slate-100 border border-slate-300
         flex flex-col justify-between p-1 font-semibold text-slate-900
+        ${className}
       `}
       style={{
         boxShadow: isSelected

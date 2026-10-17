@@ -41,6 +41,7 @@ export default function TransactionsPage() {
     if (filterType === 'deposit' && t.type === 'deposit') return true;
     if (filterType === 'withdrawal' && t.type === 'withdrawal') return true;
     if (filterType === 'game_win' && t.type === 'game_win') return true;
+    if (filterType === 'game_loss' && t.type === 'game_loss') return true;
     if (filterType === 'game_entry' && t.type === 'game_entry') return true;
     return false;
   });
@@ -68,6 +69,7 @@ export default function TransactionsPage() {
             {[
               { id: 'all', label: 'All Entries' },
               { id: 'game_win', label: 'Game Wins' },
+              { id: 'game_loss', label: 'Game Losses' },
               { id: 'deposit', label: 'Deposits' },
               { id: 'withdrawal', label: 'Withdrawals' },
               { id: 'game_entry', label: 'Table Entries' },
