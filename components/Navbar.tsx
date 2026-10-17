@@ -22,6 +22,7 @@ import {
   Gift,
   BarChart2,
 } from 'lucide-react';
+import { ReferralPromptModal } from '@/components/ReferralPromptModal';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -377,6 +378,9 @@ export function Navbar() {
           )}
         </div>
       )}
+
+      {/* 5-Minute In-App Screen Time Referral Popup */}
+      <ReferralPromptModal />
     </nav>
   );
 }

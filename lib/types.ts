@@ -25,6 +25,12 @@ export type PlayerGameStatus = 'waiting' | 'playing' | 'dropped' | 'declared' | 
 export interface UserProfile {
   uid: string;
   playerId: string; // "RA-XXXXXX"
+  referralCode?: string; // "REFXXXXXX"
+  referredBy?: string; // referrer's uid
+  referredByCode?: string; // referral code used upon signup
+  referredAt?: string;
+  totalReferrals?: number;
+  referralEarnings?: number;
   displayName: string;
   email?: string;
   phone?: string;
@@ -33,6 +39,19 @@ export interface UserProfile {
   accountStatus: 'active' | 'suspended' | 'verified';
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface ReferralRecord {
+  id: string;
+  referrerUid: string;
+  referrerCode: string;
+  refereeUid: string;
+  refereePhone?: string;
+  refereeName?: string;
+  referrerChips: number; // 50 chips
+  refereeChips: number; // 20 + 20 = 40 chips
+  status: 'completed';
+  createdAt: string;
 }
 
 export interface UserWallet {

@@ -22,6 +22,7 @@ import {
 import { auth, db } from './firebase';
 import { UserProfile, UserWallet } from './types';
 import { handleFirestoreError, OperationType } from './firebase-error';
+import { executeReferralReward, getCodeFromPlayerId } from './referral-service';
 
 export function sanitizePhone(phone: string): string {
   const cleaned = phone.replace(/[^\d]/g, '');
@@ -45,7 +46,7 @@ interface AuthContextType {
   wallet: UserWallet | null;
   loading: boolean;
   signInWithPhone: (phone: string, pass: string) => Promise<void>;
-  signUpWithPhone: (phone: string, pass: string) => Promise<void>;
+  signUpWithPhone: (phone: string, pass: string, referralCode?: string) => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string, phone?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -108,12 +109,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const newProfile: UserProfile = {
             uid: currentUser.uid,
             playerId: newPlayerId,
+            referralCode: getCodeFromPlayerId(newPlayerId),
             displayName: currentUser.displayName || (isAdminUser ? 'Admin' : 'Royal Player'),
             email: currentUser.email || '',
             phone: currentUser.phoneNumber || '',
             photoURL: currentUser.photoURL || '',
             role: isAdminUser ? 'admin' : 'player',
             accountStatus: 'active',
+            totalReferrals: 0,
+            referralEarnings: 0,
             createdAt: new Date().toISOString(),
           };
           await setDoc(userRef, newProfile);
@@ -235,7 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUpWithPhone = async (phone: string, pass: string) => {
+  const signUpWithPhone = async (phone: string, pass: string, referralCode?: string) => {
     setLoading(true);
     try {
       const cleanPhone = sanitizePhone(phone);
@@ -245,27 +249,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const authEmail = phoneToAuthEmail(cleanPhone);
       const cred = await createUserWithEmailAndPassword(auth, authEmail, pass);
       const newPlayerId = generatePlayerId();
+      const myReferralCode = getCodeFromPlayerId(newPlayerId);
       const displayName = `Player ${cleanPhone.slice(-4)}`;
       await updateProfile(cred.user, { displayName });
 
       const userRef = doc(db, 'users', cred.user.uid);
       const walletRef = doc(db, 'wallets', cred.user.uid);
+      const now = new Date().toISOString();
 
       const newProfile: UserProfile = {
         uid: cred.user.uid,
         playerId: newPlayerId,
+        referralCode: myReferralCode,
         displayName: displayName,
         email: authEmail,
         phone: cleanPhone,
         role: 'player',
         accountStatus: 'active',
-        createdAt: new Date().toISOString(),
+        totalReferrals: 0,
+        referralEarnings: 0,
+        createdAt: now,
       };
       await setDoc(userRef, newProfile);
 
-      const walletSnap = await getDoc(walletRef);
-      if (!walletSnap.exists()) {
-        const now = new Date().toISOString();
+      // Check if user entered a referral code:
+      // "Aur usko na jisne referral code dala hai usko 20 + 20 chips mil jayengi.
+      // Aur jo jisne usko bheja hai woh referral code, us referral code jisne bheja hai usko 50 mil jayenge, 50 chips mil jayengi."
+      let appliedReferral = false;
+      if (referralCode && referralCode.trim()) {
+        const refRes = await executeReferralReward({
+          refereeUid: cred.user.uid,
+          refereePhone: cleanPhone,
+          refereeName: displayName,
+          referralCode: referralCode.trim(),
+        });
+        if (refRes.success) {
+          appliedReferral = true;
+        }
+      }
+
+      // If no referral was applied, assign standard welcome bonus (20 bonus chips)
+      if (!appliedReferral) {
         const initialWallet: UserWallet = {
           uid: cred.user.uid,
           depositBalance: 0,
