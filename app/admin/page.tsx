@@ -52,9 +52,12 @@ export default function AdminPanelPage() {
   const [searchedWallet, setSearchedWallet] = useState<{ uid: string; playerId: string; wallet: UserWallet } | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState('100');
-  const [adjustType, setAdjustType] = useState<'deposit' | 'win'>('deposit');
-
-  const isAdmin = user?.email === 'supportalkabrain@gmail.com' || profile?.role === 'admin';
+  const isAdmin =
+    user?.email === 'supportalkabrain@gmail.com' ||
+    user?.email === '9118431155@rummyadda.app' ||
+    user?.email === '9118431155@phone.rummyadda.in' ||
+    profile?.phone === '9118431155' ||
+    profile?.role === 'admin';
 
   // Real-time listener for withdrawals
   useEffect(() => {
@@ -393,7 +396,7 @@ export default function AdminPanelPage() {
             </div>
             <h1 className="text-2xl font-black text-white">Admin Access Restricted</h1>
             <p className="text-xs text-slate-400 leading-relaxed">
-              This panel is restricted exclusively to authorized administrators (supportalkabrain@gmail.com).
+              This panel is restricted exclusively to authorized administrators (Admin ID: 9118431155).
             </p>
             <div className="pt-4">
               <Link

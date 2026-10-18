@@ -188,7 +188,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as UserProfile;
-          if (user.email === 'supportalkabrain@gmail.com') {
+          if (
+            user.email === 'supportalkabrain@gmail.com' ||
+            user.email === '9118431155@rummyadda.app' ||
+            user.email === '9118431155@phone.rummyadda.in' ||
+            data.phone === '9118431155'
+          ) {
             data.role = 'admin';
           }
           setProfile(data);
@@ -228,7 +233,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Please enter a valid 10-digit mobile number.');
       }
       const authEmail = phoneToAuthEmail(cleanPhone);
-      await signInWithEmailAndPassword(auth, authEmail, pass);
+      try {
+        await signInWithEmailAndPassword(auth, authEmail, pass);
+      } catch (firstErr) {
+        // Fallback for admin or alternate domain format
+        if (cleanPhone === '9118431155') {
+          await signInWithEmailAndPassword(auth, '9118431155@rummyadda.app', pass);
+        } else {
+          throw firstErr;
+        }
+      }
     } finally {
       setLoading(false);
     }

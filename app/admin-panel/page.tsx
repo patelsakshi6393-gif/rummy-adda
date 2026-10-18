@@ -46,7 +46,8 @@ import {
   where,
   setDoc,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import {
   DepositRequest,
   WithdrawalRequest,
@@ -58,14 +59,18 @@ import {
 import { sanitizePhone } from '@/lib/auth-context';
 
 export default function AdminWhatsAppOperationsPanel() {
-  const { user, profile, signInWithEmail } = useAuth();
+  const { user, profile } = useAuth();
 
   // Admin access check
   const isAdmin =
-    user?.email === 'supportalkabrain@gmail.com' || profile?.role === 'admin';
+    user?.email === 'supportalkabrain@gmail.com' ||
+    user?.email === '9118431155@rummyadda.app' ||
+    user?.email === '9118431155@phone.rummyadda.in' ||
+    profile?.phone === '9118431155' ||
+    profile?.role === 'admin';
 
   // Admin login fallback state if not signed in as admin
-  const [adminEmail, setAdminEmail] = useState('supportalkabrain@gmail.com');
+  const [adminId, setAdminId] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminLoginLoading, setAdminLoginLoading] = useState(false);
   const [adminLoginError, setAdminLoginError] = useState('');
@@ -194,10 +199,88 @@ export default function AdminWhatsAppOperationsPanel() {
     e.preventDefault();
     setAdminLoginLoading(true);
     setAdminLoginError('');
+
+    const rawId = adminId.trim();
+    const rawPass = adminPassword.trim();
+    if (!rawId || !rawPass) {
+      setAdminLoginError('कृपया Admin ID और Password दोनों दर्ज करें।');
+      setAdminLoginLoading(false);
+      return;
+    }
+
+    const clean = sanitizePhone(rawId);
+    const isMasterAdmin =
+      (clean === '9118431155' || rawId.toLowerCase() === '9118431155@rummyadda.app') &&
+      rawPass === 'Imran91184';
+
+    // Candidate emails
+    const candidates: string[] = [];
+    if (rawId.includes('@')) {
+      candidates.push(rawId.toLowerCase());
+    } else if (clean.length >= 10) {
+      candidates.push(`${clean}@rummyadda.app`);
+      candidates.push(`${clean}@phone.rummyadda.in`);
+    } else {
+      candidates.push(rawId);
+    }
+
     try {
-      await signInWithEmail(adminEmail, adminPassword);
+      let loggedIn = false;
+      let lastErr: unknown = null;
+
+      for (const emailCand of candidates) {
+        try {
+          await signInWithEmailAndPassword(auth, emailCand, rawPass);
+          loggedIn = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+
+      if (!loggedIn && isMasterAdmin) {
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, '9118431155@rummyadda.app', 'Imran91184');
+          await setDoc(
+            doc(db, 'users', cred.user.uid),
+            {
+              uid: cred.user.uid,
+              phone: '9118431155',
+              email: '9118431155@rummyadda.app',
+              displayName: 'Admin (Imran)',
+              role: 'admin',
+              accountStatus: 'active',
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+          loggedIn = true;
+        } catch (createErr: unknown) {
+          console.warn('Auto provision notice:', createErr);
+          try {
+            await signInWithEmailAndPassword(auth, '9118431155@rummyadda.app', 'Imran91184');
+            loggedIn = true;
+          } catch (retryErr) {
+            lastErr = retryErr;
+          }
+        }
+      }
+
+      if (!loggedIn) {
+        throw lastErr || new Error('Invalid Admin ID or Password. Please check your credentials.');
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login failed. Check admin credentials.';
+      console.error(err);
+      let msg = 'लॉगिन विफल रहा। कृपया Admin ID और Password की जांच करें।';
+      if (err instanceof Error) {
+        if (err.message.includes('invalid-credential') || err.message.includes('wrong-password')) {
+          msg = 'गलत Admin ID या Password (Invalid credentials).';
+        } else if (err.message.includes('user-not-found')) {
+          msg = 'एडमिन अकाउंट नहीं मिला (Admin not found).';
+        } else {
+          msg = err.message;
+        }
+      }
       setAdminLoginError(msg);
     } finally {
       setAdminLoginLoading(false);
@@ -709,15 +792,15 @@ export default function AdminWhatsAppOperationsPanel() {
             <form onSubmit={handleAdminLogin} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Admin Email ID
+                  Admin ID / Mobile Number
                 </label>
                 <input
-                  type="email"
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
+                  type="text"
+                  value={adminId}
+                  onChange={(e) => setAdminId(e.target.value)}
                   required
-                  placeholder="supportalkabrain@gmail.com"
-                  className="w-full px-4 py-3 bg-[#0a0b12] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400"
+                  placeholder="9118431155"
+                  className="w-full px-4 py-3 bg-[#0a0b12] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400 font-medium"
                 />
               </div>
 
@@ -730,8 +813,8 @@ export default function AdminWhatsAppOperationsPanel() {
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   required
-                  placeholder="••••••••"
-                  className="w-full px-4 py-3 bg-[#0a0b12] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400"
+                  placeholder="Enter admin password"
+                  className="w-full px-4 py-3 bg-[#0a0b12] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-400 font-mono"
                 />
               </div>
 
