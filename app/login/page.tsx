@@ -84,45 +84,12 @@ export default function LoginPage() {
     } catch (err: unknown) {
       const errStr = err instanceof Error ? err.message : String(err);
 
-      // If user is not found or credential invalid:
-      // Try to auto-create account for new mobile number with ₹20 welcome bonus!
       if (
         errStr.includes('user-not-found') ||
         errStr.includes('invalid-credential') ||
         errStr.includes('wrong-password')
       ) {
-        if (password.length >= 6) {
-          try {
-            await signUpWithPhone(cleanPhone, password);
-            setSuccessMsg('🎉 New Account Created! ₹20 Welcome Bonus Credited. Entering Game...');
-            setTimeout(() => {
-              router.push('/');
-            }, 800);
-            return;
-          } catch (signUpErr: unknown) {
-            const signUpErrStr = signUpErr instanceof Error ? signUpErr.message : String(signUpErr);
-            if (signUpErrStr.includes('email-already-in-use') || signUpErrStr.includes('already-in-use')) {
-              setErrorMsg('Incorrect password for this registered mobile number. Please enter the correct password.');
-              return;
-            }
-          }
-        }
-
-        // Shift to signup if password too short or needs explicit registration
-        setRedirectingToSignup(true);
-        setCountdown(2);
-        setErrorMsg('New mobile number detected! Shifting to Create Account to claim your ₹20 Welcome Bonus...');
-
-        let remaining = 2;
-        const intervalId = setInterval(() => {
-          remaining -= 1;
-          setCountdown(remaining);
-          if (remaining <= 0) {
-            clearInterval(intervalId);
-            router.push(`/signup?phone=${encodeURIComponent(cleanPhone)}`);
-          }
-        }, 1000);
-        redirectTimerRef.current = intervalId as unknown as NodeJS.Timeout;
+        setErrorMsg('Invalid mobile number or password. Please check your credentials or click "Create Account".');
       } else if (errStr.includes('user-disabled')) {
         setErrorMsg('This player account has been disabled. Contact support.');
       } else if (errStr.includes('network-request-failed')) {

@@ -49,7 +49,7 @@ export interface ReferralRecord {
   refereePhone?: string;
   refereeName?: string;
   referrerChips: number; // 50 chips
-  refereeChips: number; // 20 + 20 = 40 chips
+  refereeChips: number; // 20 chips (1-time welcome bonus)
   status: 'completed';
   createdAt: string;
 }
@@ -60,6 +60,7 @@ export interface UserWallet {
   winBalance: number;
   bonusBalance: number;
   rewardPoints: number;
+  welcomeBonusClaimed?: boolean;
   updatedAt: string;
 }
 

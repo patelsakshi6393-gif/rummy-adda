@@ -111,7 +111,7 @@ export function ReferralPromptModal() {
   };
 
   const shareWhatsAppUrl = `https://wa.me/?text=${encodeURIComponent(
-    `Join me on RummyAdda - India's #1 Real-Time Indian Rummy Platform!\n\n🎁 Register using my referral code *${referralCode}* to get *20 + 20 = 40 FREE CHIPS* instantly!\n\n100% Real Players & Instant Cash Games:\n👉 ${referralLink}`
+    `Join me on RummyAdda - India's #1 Real-Time Indian Rummy Platform!\n\n🎁 Register using my referral code *${referralCode}* to get *₹20 FREE WELCOME BONUS* instantly!\n\n100% Real Players & Instant Cash Games:\n👉 ${referralLink}`
   )}`;
 
   if (!isOpen) return null;
@@ -153,7 +153,6 @@ export function ReferralPromptModal() {
         </div>
 
         {/* Reward Explanation Cards */}
-        {/* "usko na jisne referral code dala hai usko 20 + 20 chips mil jayengi. Aur jo jisne usko bheja hai woh referral code, usko 50 mil jayenge, 50 chips mil jayengi." */}
         <div className="grid grid-cols-2 gap-2.5 relative z-10">
           {/* Friend's Reward */}
           <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-1">
@@ -162,10 +161,10 @@ export function ReferralPromptModal() {
               <span>Your Friend Gets</span>
             </div>
             <p className="text-xl sm:text-2xl font-black text-white font-mono">
-              20 + 20 <span className="text-xs font-sans text-emerald-300 font-bold">Chips</span>
+              20 <span className="text-xs font-sans text-emerald-300 font-bold">Chips</span>
             </p>
             <p className="text-[10px] text-slate-300 leading-tight">
-              20 Deposit + 20 Bonus Chips upon signup with your code!
+              ₹20 Welcome Bonus Chips upon signup with your code!
             </p>
           </div>
 

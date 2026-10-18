@@ -108,6 +108,7 @@ export async function findMatch(
       depositBalance: 0,
       winBalance: 0,
       bonusBalance: 20, // ₹20 Welcome bonus
+      welcomeBonusClaimed: true,
       rewardPoints: 0,
       updatedAt: new Date().toISOString(),
     };

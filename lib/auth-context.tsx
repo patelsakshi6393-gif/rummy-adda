@@ -131,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             depositBalance: 0,
             winBalance: 0,
             bonusBalance: 20, // ₹20 Non-withdrawable welcome bonus
+            welcomeBonusClaimed: true,
             rewardPoints: 0,
             updatedAt: now,
           };
@@ -149,10 +150,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             createdAt: now,
           });
         } else {
-          // If wallet exists but bonusBalance was missing or 0 on a fresh account, ensure ₹20 welcome bonus is active!
+          // If wallet exists but welcome bonus was never claimed on an uninitialized account, ensure ₹20 welcome bonus is set ONCE
           const wData = walletSnap.data() as UserWallet;
           if (
-            (wData.bonusBalance === undefined || wData.bonusBalance === null || wData.bonusBalance === 0) &&
+            !wData.welcomeBonusClaimed &&
+            (wData.bonusBalance === undefined || wData.bonusBalance === null) &&
             (wData.depositBalance || 0) === 0 &&
             (wData.winBalance || 0) === 0
           ) {
@@ -160,6 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               walletRef,
               {
                 bonusBalance: 20,
+                welcomeBonusClaimed: true,
                 updatedAt: new Date().toISOString(),
               },
               { merge: true }
@@ -207,14 +210,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       (docSnap) => {
         if (docSnap.exists()) {
           const wData = docSnap.data() as UserWallet;
-          // Guard: if bonusBalance is missing or 0 on new user, fallback to 20
-          if (
-            (wData.bonusBalance === undefined || wData.bonusBalance === null) &&
-            (wData.depositBalance || 0) === 0 &&
-            (wData.winBalance || 0) === 0
-          ) {
-            wData.bonusBalance = 20;
-          }
           setWallet(wData);
         }
       },
@@ -288,30 +283,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // If no referral was applied, assign standard welcome bonus (20 bonus chips)
+      // If no referral was applied, assign standard welcome bonus (20 bonus chips) strictly once
       if (!appliedReferral) {
-        const initialWallet: UserWallet = {
-          uid: cred.user.uid,
-          depositBalance: 0,
-          winBalance: 0,
-          bonusBalance: 20, // ₹20 Non-withdrawable welcome bonus
-          rewardPoints: 0,
-          updatedAt: now,
-        };
-        await setDoc(walletRef, initialWallet);
+        const walletSnap = await getDoc(walletRef);
+        if (!walletSnap.exists()) {
+          const initialWallet: UserWallet = {
+            uid: cred.user.uid,
+            depositBalance: 0,
+            winBalance: 0,
+            bonusBalance: 20, // ₹20 Non-withdrawable welcome bonus
+            welcomeBonusClaimed: true,
+            rewardPoints: 0,
+            updatedAt: now,
+          };
+          await setDoc(walletRef, initialWallet);
 
-        const txRef = doc(collection(db, 'transactions'));
-        await setDoc(txRef, {
-          id: txRef.id,
-          uid: cred.user.uid,
-          type: 'reward',
-          amount: 20,
-          currency: 'INR',
-          status: 'completed',
-          description: 'Welcome Bonus - ₹20 Non-withdrawable Game Credits',
-          referenceId: 'welcome_bonus_20',
-          createdAt: now,
-        });
+          const txRef = doc(collection(db, 'transactions'));
+          await setDoc(txRef, {
+            id: txRef.id,
+            uid: cred.user.uid,
+            type: 'reward',
+            amount: 20,
+            currency: 'INR',
+            status: 'completed',
+            description: 'Welcome Bonus - ₹20 Non-withdrawable Game Credits',
+            referenceId: 'welcome_bonus_20',
+            createdAt: now,
+          });
+        }
       }
     } finally {
       setLoading(false);
@@ -357,6 +356,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           depositBalance: 0,
           winBalance: 0,
           bonusBalance: 20, // ₹20 Non-withdrawable welcome bonus
+          welcomeBonusClaimed: true,
           rewardPoints: 0,
           updatedAt: now,
         };

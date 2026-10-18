@@ -146,7 +146,7 @@ export async function validateReferralCode(
   return {
     isValid: true,
     referrer,
-    message: `✓ Valid code from ${referrer.displayName || 'friend'}! You will receive 20 + 20 = 40 Free Chips!`,
+    message: `✓ Valid code from ${referrer.displayName || 'friend'}! You will receive ₹20 Welcome Bonus!`,
   };
 }
 
@@ -223,30 +223,30 @@ export async function executeReferralReward(params: {
       updatedAt: now,
     });
 
-    // 2. Credit Referee (New User) with 20 + 20 Chips
-    // "Aur usko na jisne referral code dala hai usko 20 + 20 chips mil jayengi."
-    // 20 Deposit Chips + 20 Bonus Chips = 40 Chips total!
+    // 2. Credit Referee (New User) with strictly 20 Bonus Chips (1-time welcome bonus)
+    // "game wale mai 1 one time sign up krne pr 20 coin milne honge"
     const refereeWalletRef = doc(db, 'wallets', refereeUid);
     const refereeWalletSnap = await getDoc(refereeWalletRef);
     if (refereeWalletSnap.exists()) {
       const curRefWallet = refereeWalletSnap.data() as UserWallet;
       await updateDoc(refereeWalletRef, {
-        depositBalance: (curRefWallet.depositBalance || 0) + 20,
-        bonusBalance: Math.max(20, curRefWallet.bonusBalance || 0),
+        bonusBalance: curRefWallet.bonusBalance > 0 ? curRefWallet.bonusBalance : 20,
+        welcomeBonusClaimed: true,
         updatedAt: now,
       });
     } else {
       await setDoc(refereeWalletRef, {
         uid: refereeUid,
-        depositBalance: 20,
+        depositBalance: 0,
         winBalance: 0,
         bonusBalance: 20,
         rewardPoints: 0,
+        welcomeBonusClaimed: true,
         updatedAt: now,
       });
     }
 
-    // Transaction for Referee - Referral Bonus (20 Deposit Chips)
+    // Transaction for Referee - 1-time Welcome Bonus (20 Bonus Chips)
     const refereeTxRef = doc(collection(db, 'transactions'));
     await setDoc(refereeTxRef, {
       id: refereeTxRef.id,
@@ -255,8 +255,8 @@ export async function executeReferralReward(params: {
       amount: 20,
       currency: 'INR',
       status: 'completed',
-      description: `Referral Reward: +20 Free Deposit Chips (Friend Code: ${cleaned})`,
-      referenceId: `referee_reward_${cleaned}`,
+      description: `Welcome Bonus: ₹20 Non-withdrawable Game Credits (Joined with Code: ${cleaned})`,
+      referenceId: `welcome_bonus_${cleaned}`,
       createdAt: now,
     });
 
@@ -279,7 +279,7 @@ export async function executeReferralReward(params: {
       refereePhone: `+91 ******${refereePhone.slice(-4)}`,
       refereeName,
       referrerChips: 50,
-      refereeChips: 40,
+      refereeChips: 20,
       status: 'completed',
       createdAt: now,
     };
@@ -288,7 +288,7 @@ export async function executeReferralReward(params: {
     return {
       success: true,
       referrerUid: referrer.uid,
-      message: `Referral rewards applied: 20 + 20 chips credited to new user, 50 chips credited to ${referrer.displayName || 'referrer'}!`,
+      message: `Referral rewards applied: 20 welcome chips credited to new user, 50 chips credited to ${referrer.displayName || 'referrer'}!`,
     };
   } catch (err) {
     console.error('Error applying referral reward:', err);

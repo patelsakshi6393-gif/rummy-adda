@@ -111,12 +111,7 @@ function SignupForm() {
     setSubmitting(true);
     try {
       await signUpWithPhone(cleanPhone, password, cleanRef);
-      // User registered with referral code gets 20 + 20 chips, referrer gets 50 chips
-      if (cleanRef) {
-        setSuccessMsg('🎉 Registration Successful! 20 + 20 = 40 Free Chips Credited to your wallet! Entering Game...');
-      } else {
-        setSuccessMsg('🎉 Registration Successful! ₹20 Welcome Bonus Credited. Entering Game...');
-      }
+      setSuccessMsg('🎉 Registration Successful! ₹20 Welcome Bonus Credited. Entering Game...');
       setTimeout(() => {
         router.push('/');
       }, 900);
@@ -197,10 +192,10 @@ function SignupForm() {
             </div>
             <div className="text-left">
               <p className="font-extrabold text-emerald-300 text-xs uppercase tracking-wider">
-                Referral Bonus Active: 20 + 20 = 40 Chips!
+                Referral Code Active!
               </p>
               <p className="text-[11px] text-slate-300 mt-0.5">
-                Code <strong className="text-white font-mono">{referralCode}</strong> applied. You get 20 Deposit Chips + 20 Bonus Chips!
+                Code <strong className="text-white font-mono">{referralCode}</strong> applied. ₹20 Welcome Bonus will be credited to your account!
               </p>
             </div>
           </div>
@@ -214,7 +209,7 @@ function SignupForm() {
                 ₹20 Welcome Bonus On Registration
               </p>
               <p className="text-[11px] text-slate-300 mt-0.5">
-                Have a friend&apos;s referral code? Enter it below to unlock <strong>20 + 20 = 40 Free Chips</strong>!
+                New players get ₹20 free welcome credits to play micro stakes rummy!
               </p>
             </div>
           </div>
@@ -304,7 +299,7 @@ function SignupForm() {
                 <Gift className="w-3.5 h-3.5 text-amber-400" />
                 <span>Referral Code (Optional)</span>
               </label>
-              <span className="text-[10px] text-emerald-400 font-bold">Get 20 + 20 Chips</span>
+              <span className="text-[10px] text-emerald-400 font-bold">Get ₹20 Bonus</span>
             </div>
             <div className="relative">
               <input
@@ -373,7 +368,7 @@ function SignupForm() {
               </>
             ) : (
               <>
-                <span>{referralCode ? 'SIGN UP & GET 20 + 20 = 40 CHIPS' : 'SIGN UP & GET ₹20 BONUS'}</span>
+                <span>SIGN UP & GET ₹20 BONUS</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

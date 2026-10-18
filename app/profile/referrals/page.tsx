@@ -26,7 +26,7 @@ export default function ReferralsPage() {
   };
 
   const shareWhatsAppUrl = `https://wa.me/?text=${encodeURIComponent(
-    `Join me on RummyAdda - India's authentic real-time Indian Rummy platform!\n\n🎁 Register using my referral code *${referralCode}* to get *20 + 20 = 40 FREE CHIPS* instantly!\n\n100% Real Players & Instant Cash Games:\n👉 ${referralLink}`
+    `Join me on RummyAdda - India's authentic real-time Indian Rummy platform!\n\n🎁 Register using my referral code *${referralCode}* to get *₹20 FREE WELCOME BONUS* instantly!\n\n100% Real Players & Instant Cash Games:\n👉 ${referralLink}`
   )}`;
 
   return (
@@ -47,7 +47,7 @@ export default function ReferralsPage() {
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-white">Refer & Earn</h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              Give your friends 20 + 20 = 40 Free Chips, and earn 50 Chips for every friend who registers!
+              Give your friends ₹20 Free Welcome Chips, and earn 50 Chips for every friend who registers!
             </p>
           </div>
 
@@ -114,9 +114,9 @@ export default function ReferralsPage() {
 
                 <div className="p-4 rounded-xl bg-[#090a12] border border-white/5 space-y-1.5">
                   <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-xs">2</span>
-                  <p className="font-bold text-white text-sm">Friend Gets 20 + 20 Chips</p>
+                  <p className="font-bold text-white text-sm">Friend Gets ₹20 Welcome Bonus</p>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    When your friend signs up with your code, they immediately get <strong>20 Deposit + 20 Bonus Chips</strong>!
+                    When your friend signs up with your code, they immediately receive <strong>₹20 Welcome Bonus Chips</strong>!
                   </p>
                 </div>
 
