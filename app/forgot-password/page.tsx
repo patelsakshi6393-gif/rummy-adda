@@ -7,7 +7,7 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { Phone, MessageCircle, ArrowLeft, ShieldCheck } from 'lucide-react';
 
-const WHATSAPP_NUMBER = '919277182389';
+const WHATSAPP_NUMBER = '919118431155';
 
 export default function ForgotPasswordPage() {
   const [phone, setPhone] = useState('');

@@ -431,6 +431,12 @@ export default function AdminPanelPage() {
 
             <div className="flex items-center gap-2">
               <Link
+                href="/admin-panel"
+                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/20"
+              >
+                WhatsApp Operations Desk
+              </Link>
+              <Link
                 href="/wallet"
                 className="py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200"
               >

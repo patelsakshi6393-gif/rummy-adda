@@ -151,14 +151,24 @@ export function Navbar() {
 
                       <div className="py-1">
                         {(user?.email === 'supportalkabrain@gmail.com' || profile?.role === 'admin') && (
-                          <NextLink
-                            href="/admin"
-                            onClick={() => setDropdownOpen(false)}
-                            className="flex items-center gap-2.5 px-4 py-2 text-xs bg-amber-500/15 text-amber-300 font-bold hover:bg-amber-500/25 border-b border-amber-500/20 mb-1"
-                          >
-                            <ShieldCheck className="w-4 h-4 text-amber-400" />
-                            <span>Admin Control Panel</span>
-                          </NextLink>
+                          <>
+                            <NextLink
+                              href="/admin-panel"
+                              onClick={() => setDropdownOpen(false)}
+                              className="flex items-center gap-2.5 px-4 py-2 text-xs bg-emerald-500/15 text-emerald-300 font-bold hover:bg-emerald-500/25 border-b border-emerald-500/20 mb-1"
+                            >
+                              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                              <span>WhatsApp Operations Admin</span>
+                            </NextLink>
+                            <NextLink
+                              href="/admin"
+                              onClick={() => setDropdownOpen(false)}
+                              className="flex items-center gap-2.5 px-4 py-2 text-xs bg-amber-500/15 text-amber-300 font-bold hover:bg-amber-500/25 border-b border-amber-500/20 mb-1"
+                            >
+                              <ShieldCheck className="w-4 h-4 text-amber-400" />
+                              <span>Admin Control Panel</span>
+                            </NextLink>
+                          </>
                         )}
                         <NextLink
                           href="/profile"
@@ -313,13 +323,22 @@ export function Navbar() {
 
               <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2">
                 {(user?.email === 'supportalkabrain@gmail.com' || profile?.role === 'admin') && (
-                  <NextLink
-                    href="/admin"
-                    onClick={() => setMenuOpen(false)}
-                    className="col-span-2 px-3 py-2 rounded-lg bg-amber-500/20 text-xs text-amber-300 font-bold text-center border border-amber-500/30"
-                  >
-                    Admin Control Panel
-                  </NextLink>
+                  <>
+                    <NextLink
+                      href="/admin-panel"
+                      onClick={() => setMenuOpen(false)}
+                      className="col-span-2 px-3 py-2 rounded-lg bg-emerald-500/20 text-xs text-emerald-300 font-bold text-center border border-emerald-500/30"
+                    >
+                      WhatsApp Operations Admin
+                    </NextLink>
+                    <NextLink
+                      href="/admin"
+                      onClick={() => setMenuOpen(false)}
+                      className="col-span-2 px-3 py-2 rounded-lg bg-amber-500/20 text-xs text-amber-300 font-bold text-center border border-amber-500/30"
+                    >
+                      Admin Control Panel
+                    </NextLink>
+                  </>
                 )}
                 <NextLink
                   href="/profile"

@@ -25,7 +25,7 @@ import { db } from '@/lib/firebase';
 import { WithdrawalRequest } from '@/lib/types';
 import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
-const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
+const OFFICIAL_WHATSAPP_NUMBER = '919118431155';
 
 function WithdrawConfirmationContent() {
   const searchParams = useSearchParams();

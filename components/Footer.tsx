@@ -60,7 +60,7 @@ export function Footer() {
             For deposit queries, wallet assistance, and account support:
           </p>
           <a
-            href="https://wa.me/919277182389?text=Hello%20RummyAdda%20Support,%20I%20need%20assistance"
+            href="https://wa.me/919118431155?text=Hello%20RummyAdda%20Support,%20I%20need%20assistance"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-105"

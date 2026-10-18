@@ -11,7 +11,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { WithdrawalRequest } from '@/lib/types';
 
-const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
+const OFFICIAL_WHATSAPP_NUMBER = '919118431155';
 
 export default function WithdrawalHistoryPage() {
   const { user } = useAuth();

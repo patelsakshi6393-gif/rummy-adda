@@ -10,7 +10,7 @@ import { Footer } from '@/components/Footer';
 import { MessageCircle, ExternalLink, Copy, Loader2 } from 'lucide-react';
 import { getShortPlayerId, getUserMobile } from '@/lib/utils';
 
-const OFFICIAL_WHATSAPP_NUMBER = '919277182389';
+const OFFICIAL_WHATSAPP_NUMBER = '919118431155';
 
 function WhatsAppRedirectContent() {
   const searchParams = useSearchParams();
