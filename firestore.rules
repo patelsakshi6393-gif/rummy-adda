@@ -12,8 +12,11 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == 'supportalkabrain@gmail.com' ||
-        ('admin' in request.auth.token && request.auth.token.admin == true)
+        request.auth.token.email in ['9118431155@rummyadda.app', '9118431155@phone.rummyadda.in', 'supportalkabrain@gmail.com', 'admin@rummyadda.com'] ||
+        ('admin' in request.auth.token && request.auth.token.admin == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Admin', 'admin'] ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone == '9118431155'))
       );
     }
 

@@ -213,61 +213,48 @@ export default function AdminWhatsAppOperationsPanel() {
       (clean === '9118431155' || rawId.toLowerCase() === '9118431155@rummyadda.app') &&
       rawPass === 'Imran91184';
 
-    // Candidate emails
-    const candidates: string[] = [];
-    if (rawId.includes('@')) {
-      candidates.push(rawId.toLowerCase());
-    } else if (clean.length >= 10) {
-      candidates.push(`${clean}@rummyadda.app`);
-      candidates.push(`${clean}@phone.rummyadda.in`);
-    } else {
-      candidates.push(rawId);
+    // Primary email for admin login
+    let primaryEmail = rawId;
+    if (isMasterAdmin) {
+      primaryEmail = '9118431155@rummyadda.app';
+    } else if (!rawId.includes('@') && clean.length >= 10) {
+      primaryEmail = `${clean}@rummyadda.app`;
     }
 
     try {
       let loggedIn = false;
-      let lastErr: unknown = null;
-
-      for (const emailCand of candidates) {
-        try {
-          await signInWithEmailAndPassword(auth, emailCand, rawPass);
-          loggedIn = true;
-          break;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-
-      if (!loggedIn && isMasterAdmin) {
-        try {
-          const cred = await createUserWithEmailAndPassword(auth, '9118431155@rummyadda.app', 'Imran91184');
-          await setDoc(
-            doc(db, 'users', cred.user.uid),
-            {
-              uid: cred.user.uid,
-              phone: '9118431155',
-              email: '9118431155@rummyadda.app',
-              displayName: 'Admin (Imran)',
-              role: 'admin',
-              accountStatus: 'active',
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-          loggedIn = true;
-        } catch (createErr: unknown) {
-          console.warn('Auto provision notice:', createErr);
+      try {
+        await signInWithEmailAndPassword(auth, primaryEmail, rawPass);
+        loggedIn = true;
+      } catch (firstErr) {
+        if (isMasterAdmin) {
           try {
-            await signInWithEmailAndPassword(auth, '9118431155@rummyadda.app', 'Imran91184');
+            const cred = await createUserWithEmailAndPassword(auth, '9118431155@rummyadda.app', 'Imran91184');
+            await setDoc(
+              doc(db, 'users', cred.user.uid),
+              {
+                uid: cred.user.uid,
+                phone: '9118431155',
+                email: '9118431155@rummyadda.app',
+                displayName: 'Admin (Imran)',
+                role: 'admin',
+                accountStatus: 'active',
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
             loggedIn = true;
-          } catch (retryErr) {
-            lastErr = retryErr;
+          } catch (createErr) {
+            console.warn('Auto create notice:', createErr);
+            throw firstErr;
           }
+        } else {
+          throw firstErr;
         }
       }
 
       if (!loggedIn) {
-        throw lastErr || new Error('Invalid Admin ID or Password. Please check your credentials.');
+        throw new Error('Invalid Admin ID or Password. Please check your credentials.');
       }
     } catch (err: unknown) {
       console.error(err);
