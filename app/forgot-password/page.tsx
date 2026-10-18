@@ -68,7 +68,7 @@ export default function ForgotPasswordPage() {
               className="w-full py-3.5 px-4 rounded-xl font-bold text-slate-950 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95 text-xs uppercase"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>RESET VIA WHATSAPP SUPPORT DESK</span>
+              <span>RESET VIA WHATSAPP (+91 9118431155)</span>
             </a>
           </div>
 

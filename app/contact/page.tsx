@@ -85,8 +85,8 @@ export default function ContactPage() {
 
               <div className="p-4 rounded-xl bg-[#090a12] border border-white/5 space-y-1">
                 <span className="text-[10px] text-slate-500 uppercase font-bold">Helpline Desk</span>
-                <p className="text-lg font-black text-emerald-400">Official 24/7 Support Desk</p>
-                <p className="text-[11px] text-slate-400">Available Daily: 24/7 Player Response</p>
+                <p className="text-xl font-mono font-black text-emerald-400">+91 9118431155</p>
+                <p className="text-[11px] text-slate-400">Official Helpline • 24/7 Player Response</p>
               </div>
             </div>
 
@@ -99,7 +99,7 @@ export default function ContactPage() {
               className="w-full py-4 px-6 rounded-xl font-black text-slate-950 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] active:scale-95"
             >
               <MessageCircle className="w-5 h-5 fill-current" />
-              <span>CHAT ON WHATSAPP SUPPORT DESK</span>
+              <span>CHAT ON WHATSAPP (+91 9118431155)</span>
             </a>
           </div>
 

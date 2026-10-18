@@ -225,7 +225,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
             className="w-full py-4 px-6 bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] active:scale-95"
           >
             <MessageCircle className="w-4 h-4 fill-current" />
-            <span>SEND WITHDRAWAL REQUEST ON WHATSAPP</span>
+            <span>SEND WITHDRAWAL REQUEST ON WHATSAPP (+91 9118431155)</span>
             <ExternalLink className="w-3.5 h-3.5 ml-1" />
           </a>
           <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
@@ -234,7 +234,7 @@ Hello, मुझे ₹${formattedNet} विड्रॉल करना है
             </p>
           </div>
           <p className="text-[10px] text-slate-500 text-center mt-2">
-            Official Support Desk WhatsApp will verify and process your ₹{formattedNet} payout.
+            Official Support Desk WhatsApp (+91 9118431155) will verify and process your ₹{formattedNet} payout.
           </p>
         </div>
       </div>

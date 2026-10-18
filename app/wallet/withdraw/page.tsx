@@ -299,7 +299,7 @@ export default function WithdrawPage() {
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-slate-500 uppercase font-bold">WhatsApp Payout Desk</span>
-                <p className="text-xs font-bold text-emerald-400">Verified Support</p>
+                <p className="text-xs font-mono font-bold text-emerald-400">+91 9118431155</p>
               </div>
             </div>
 

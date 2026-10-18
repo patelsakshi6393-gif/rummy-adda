@@ -105,7 +105,7 @@ Hello, मुझे ₹${formattedAmount} डिपॉजिट करना ह
           className="w-full sm:w-auto py-3.5 px-7 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 transition-transform hover:scale-105"
         >
           <MessageCircle className="w-4 h-4 fill-current" />
-          <span>Send on WhatsApp Support Desk</span>
+          <span>Send on WhatsApp (+91 9118431155)</span>
           <ExternalLink className="w-3.5 h-3.5 ml-1" />
         </a>
         <Link
@@ -117,7 +117,7 @@ Hello, मुझे ₹${formattedAmount} डिपॉजिट करना ह
       </div>
 
       <p className="text-[11px] text-slate-500">
-        Support desk will verify your deposit and provide UPI / QR code on WhatsApp.
+        Support desk (+91 9118431155) will verify your deposit and provide UPI / QR code on WhatsApp.
       </p>
     </main>
   );

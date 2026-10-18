@@ -66,10 +66,10 @@ export function Footer() {
             className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform hover:scale-105"
           >
             <MessageCircle className="w-4 h-4" />
-            <span>Chat on WhatsApp Support</span>
+            <span>Chat on WhatsApp (+91 9118431155)</span>
           </a>
-          <p className="text-[10px] text-slate-400 text-center">
-            Official WhatsApp Desk • 24/7 Player Help
+          <p className="text-[11px] text-emerald-400 font-mono font-bold text-center">
+            Official Helpline: +91 9118431155
           </p>
         </div>
       </div>
