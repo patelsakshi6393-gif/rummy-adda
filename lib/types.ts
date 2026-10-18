@@ -90,6 +90,7 @@ export interface DepositRequest {
   depositId: string;
   uid: string;
   playerId: string;
+  playerName?: string;
   requestedAmount: number;
   status: 'pending' | 'approved' | 'rejected' | 'cancelled';
   whatsappOpenedAt?: string;
@@ -97,6 +98,7 @@ export interface DepositRequest {
   reviewedAt?: string;
   reviewedBy?: string;
   adminNote?: string;
+  utr?: string;
 }
 
 export interface WithdrawalRequest {
@@ -114,6 +116,10 @@ export interface WithdrawalRequest {
   status: 'pending' | 'processing' | 'paid' | 'rejected' | 'failed';
   createdAt: string;
   processedAt?: string;
+  processedBy?: string;
+  adminNote?: string;
+  rejectionReason?: string;
+  utr?: string;
 }
 
 export interface TableConfig {
