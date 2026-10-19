@@ -201,19 +201,17 @@ export function isImpureSequence(cards: Card[], wildJokerRank?: Rank): boolean {
 
 /**
  * Check if a group is a valid Set:
- * - 3 to 6 cards of same rank (different suits for natural cards; jokers allowed to complete/extend).
- * - Joker acts as wildcard master card filling missing suits or forming 4, 5, 6-card sets.
- * - "Joker ke through 4, 5, 6 cards ke set bhi banane ka option hona chahiye."
- * - "Agar teen cards ka set joker ki help se complete hota hai, to use valid set maana jaana chahiye."
+ * - Strictly 3 cards of same rank (different suits for natural cards; jokers allowed to complete).
+ * - "set jo hai 4 5 7 8 9 cards ka ban rha hai sirf 3 card ka set ban skta hai"
  */
 export function isValidSet(cards: Card[], wildJokerRank?: Rank): boolean {
-  if (cards.length < 3 || cards.length > 6) return false;
+  if (!cards || cards.length !== 3) return false;
 
   const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
-  if (naturalCards.length === 0) return true; // All wild jokers count as valid master set
+  if (naturalCards.length === 0) return true; // 3 wild jokers count as valid master set
 
-  // In Indian Rummy, maximum 4 natural suits (♠, ♥, ♦, ♣)
-  if (naturalCards.length > 4) return false;
+  // In Indian Rummy, maximum 3 cards in set as required
+  if (naturalCards.length > 3) return false;
 
   const targetRank = naturalCards[0].rank;
   if (!naturalCards.every(c => c.rank === targetRank)) return false;
@@ -325,7 +323,7 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
     };
   }
 
-  // 3. Set (3, 4, 5, or 6 cards of same rank with Jokers allowed)
+  // 3. Set (Strictly 3 cards of same rank with different suits, Jokers allowed)
   if (isValidSet(cards, wildJokerRank)) {
     const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
     const jokerReplacements: string[] = [];
@@ -335,8 +333,8 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
         isValid: true,
         type: 'set',
         title: 'JOKER SET',
-        badgeText: `⭐ MASTER JOKER SET (${cardCount}) +20 Pts`,
-        detailText: `All-Wild Jokers Master Set (${cardCount} Cards)`,
+        badgeText: `⭐ MASTER JOKER SET (3) +20 Pts`,
+        detailText: `All-Wild Jokers 3-Card Master Set`,
         hasJoker: true,
         jokerReplacements: ['Master Wildcards'],
         points: 20,
@@ -354,18 +352,15 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
     }
 
     if (hasJoker) {
-      let detail = '';
-      if (cardCount <= 4 && jokerReplacements.length > 0) {
-        detail = `Joker acts as missing ${jokerReplacements.slice(0, 2).join('/')} in Set of ${targetRank}s`;
-      } else {
-        detail = `Joker completes ${cardCount}-card Master Set of ${targetRank}s`;
-      }
+      const detail = jokerReplacements.length > 0
+        ? `Joker acts as missing ${jokerReplacements.slice(0, 2).join('/')} in 3-Card Set of ${targetRank}s`
+        : `Joker completes 3-Card Set of ${targetRank}s`;
 
       return {
         isValid: true,
         type: 'set',
         title: 'JOKER SET',
-        badgeText: `⭐ JOKER SET (${cardCount}) +20 Pts`,
+        badgeText: `⭐ JOKER SET (3) +20 Pts`,
         detailText: detail,
         hasJoker: true,
         jokerReplacements,
@@ -374,13 +369,13 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
       };
     }
 
-    // Natural Set without Jokers
+    // Natural Set without Jokers (Strictly 3 cards)
     return {
       isValid: true,
       type: 'set',
       title: 'VALID SET',
-      badgeText: `✓ VALID SET (${cardCount}) +20 Pts`,
-      detailText: `Valid natural ${cardCount}-card Set of ${targetRank}s`,
+      badgeText: `✓ VALID SET (3) +20 Pts`,
+      detailText: `Valid natural 3-Card Set of ${targetRank}s`,
       hasJoker: false,
       jokerReplacements: [],
       points: 20,
@@ -389,7 +384,16 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
   }
 
   // 4. Invalid group
-  const needCards = cardCount < 3 ? `Need at least 3 cards (current: ${cardCount})` : 'Does not form a valid sequence or set';
+  let needCards = 'Does not form a valid sequence or 3-card set';
+  if (cardCount < 3) {
+    needCards = `Need at least 3 cards (current: ${cardCount})`;
+  } else if (cardCount > 3) {
+    // Check if user was trying to make a set with > 3 cards
+    const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
+    if (naturalCards.length > 0 && naturalCards.every(c => c.rank === naturalCards[0].rank)) {
+      needCards = `Sets must be strictly 3 cards (current: ${cardCount} cards)`;
+    }
+  }
 
   return {
     isValid: false,
@@ -596,8 +600,10 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
       }
     }
     if (uniqueSuitCards.length >= 3) {
-      melds.push(uniqueSuitCards);
-      for (const card of uniqueSuitCards) {
+      // Strictly 3 cards for a valid set
+      const set3 = uniqueSuitCards.slice(0, 3);
+      melds.push(set3);
+      for (const card of set3) {
         const idx = naturals.findIndex(c => c.id === card.id);
         if (idx !== -1) naturals.splice(idx, 1);
       }
@@ -639,7 +645,7 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
     }
   }
 
-  // 5. Use Jokers to complete 3-card Sets from 2 natural cards of same rank
+  // 5. Use Jokers to complete 3-card Sets from 2 natural cards of same rank (strictly 3 cards)
   if (jokers.length > 0) {
     const remainingRankGroups = new Map<string, Card[]>();
     for (const c of naturals) {
@@ -660,7 +666,7 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
       }
       if (uniqueSuitCards.length === 2 && jokers.length > 0) {
         const jk = jokers.pop()!;
-        const setMeld = [...uniqueSuitCards, jk];
+        const setMeld = [...uniqueSuitCards, jk]; // strictly 3 cards
         melds.push(setMeld);
         for (const card of uniqueSuitCards) {
           const idx = naturals.findIndex(c => c.id === card.id);
@@ -670,33 +676,23 @@ export function findBestMelds(cards: Card[], wildJokerRank?: Rank): Card[][] {
     });
   }
 
-  // 6. Attach any remaining jokers to existing 3, 4, or 5-card melds (up to 6 cards)
+  // 6. Attach any remaining jokers ONLY to existing sequences (never to sets, since sets must be strictly 3 cards)
   while (jokers.length > 0 && melds.length > 0) {
-    const targetMeld = melds.find(m => m.length >= 3 && m.length < 6);
-    if (targetMeld) {
-      targetMeld.push(jokers.pop()!);
+    const targetSeq = melds.find(
+      m => (isPureSequence(m, wildJokerRank) || isImpureSequence(m, wildJokerRank)) && m.length < 5
+    );
+    if (targetSeq) {
+      targetSeq.push(jokers.pop()!);
     } else {
       break;
     }
   }
 
-  // 5. Any leftover cards
+  // 7. Leftover unmatched cards stay together in ONE single group
+  // "cards alag alag group mai lag rhe hai sab ek hi group mai honge set ban jane ke baad wo uss group se alag ho jayenge"
   const leftovers = [...naturals, ...jokers];
   if (leftovers.length > 0) {
-    if (melds.length === 0) {
-      const chunks: Card[][] = [];
-      for (let i = 0; i < leftovers.length; i += 4) {
-        chunks.push(leftovers.slice(i, i + 4));
-      }
-      return chunks;
-    }
-    // Put remaining into separate group or chunk
-    if (leftovers.length <= 4) {
-      melds.push(leftovers);
-    } else {
-      melds.push(leftovers.slice(0, 3));
-      melds.push(leftovers.slice(3));
-    }
+    melds.push(leftovers);
   }
 
   return melds;

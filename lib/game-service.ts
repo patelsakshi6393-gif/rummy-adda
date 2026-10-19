@@ -1085,11 +1085,14 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
 
     if (gameData.status !== 'PLAYING') throw new Error('Game is not in playing state.');
     if (gameData.turnUid !== playerUid) throw new Error("It is not your turn to discard.");
-    if (!gameData.hasDrawn) throw new Error('You must draw a card before discarding.');
 
     const playerSnap = await tx.get(playerRef);
     if (!playerSnap.exists()) throw new Error('Player not found.');
     const playerData = playerSnap.data() as GamePlayerState;
+
+    const currentHand = playerData.cards || [];
+    const hasPlayerDrawn = Boolean(gameData.hasDrawn) || currentHand.length >= 14;
+    if (!hasPlayerDrawn) throw new Error('You must draw a card before discarding.');
 
     // Read ALL player docs inside the transaction for consistency
     const allPlayerUids = Array.from(new Set([
@@ -1106,7 +1109,6 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
       }
     }
 
-    const currentHand = playerData.cards || [];
     let cardIdx = currentHand.findIndex((c) => c.id === cardToDiscard.id);
     if (cardIdx === -1) {
       cardIdx = currentHand.findIndex((c) => c.suit === cardToDiscard.suit && c.rank === cardToDiscard.rank);
