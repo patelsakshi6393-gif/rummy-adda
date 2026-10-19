@@ -41,12 +41,14 @@ export const INITIAL_TABLES: Omit<TableConfig, 'currentPlayers' | 'status'>[] = 
   { tableId: 'pt_160_2p', name: 'Points Rummy - Bronze Table', gameMode: 'points', pointValue: 2, entryFee: 160, minPlayers: 2, maxPlayers: 2 },
   { tableId: 'pt_400_2p', name: 'Points Rummy - Silver Table (₹400)', gameMode: 'points', pointValue: 5, entryFee: 400, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pt_800_2p', name: 'Points Rummy - Silver Table', gameMode: 'points', pointValue: 10, entryFee: 800, minPlayers: 2, maxPlayers: 2 },
+  { tableId: 'pt_1600_2p', name: 'Points Rummy - Ruby Table (₹1,600)', gameMode: 'points', pointValue: 20, entryFee: 1600, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pt_3200_6p', name: 'Points Rummy - Gold Royale (6P)', gameMode: 'points', pointValue: 40, entryFee: 3200, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pt_6000_6p', name: 'Points Rummy - Platinum Table (6P)', gameMode: 'points', pointValue: 75, entryFee: 6000, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pt_10000_6p', name: 'Points Rummy - Diamond Salon (6P)', gameMode: 'points', pointValue: 125, entryFee: 10000, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pt_16000_6p', name: 'Points Rummy - High Roller Crown (6P)', gameMode: 'points', pointValue: 200, entryFee: 16000, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pool_160_6p', name: 'Pool 101 - Bronze Royale', gameMode: 'pool101', pointValue: 2, entryFee: 160, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pool_800_6p', name: 'Pool 101 - Silver Arena', gameMode: 'pool101', pointValue: 10, entryFee: 800, minPlayers: 2, maxPlayers: 6 },
+  { tableId: 'pool_1600_6p', name: 'Pool 101 - Ruby Arena', gameMode: 'pool101', pointValue: 20, entryFee: 1600, minPlayers: 2, maxPlayers: 6 },
   { tableId: 'pool_3200_6p', name: 'Pool 101 - Masters Championship', gameMode: 'pool101', pointValue: 40, entryFee: 3200, minPlayers: 2, maxPlayers: 6 },
 ];
 
@@ -63,6 +65,7 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
     { entryFee: 160, pointValue: 2, name: 'Bronze Stake (₹2/pt)' },
     { entryFee: 400, pointValue: 5, name: 'Silver Stake (₹5/pt - ₹400)', badge: 'Popular' },
     { entryFee: 800, pointValue: 10, name: 'Silver Stake (₹10/pt)' },
+    { entryFee: 1600, pointValue: 20, name: 'Ruby Stake (₹20/pt - ₹1,600)' },
     { entryFee: 3200, pointValue: 40, name: 'Gold Royale (₹40/pt)' },
     { entryFee: 6000, pointValue: 75, name: 'Platinum Stake (₹75/pt)' },
     { entryFee: 10000, pointValue: 125, name: 'Diamond Salon (₹125/pt)' },
@@ -72,6 +75,7 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
     { entryFee: 20, pointValue: 0.25, name: 'Pool 101 - Micro (₹20)' },
     { entryFee: 160, pointValue: 2, name: 'Pool 101 - Bronze (₹160)' },
     { entryFee: 800, pointValue: 10, name: 'Pool 101 - Silver (₹800)' },
+    { entryFee: 1600, pointValue: 20, name: 'Pool 101 - Ruby (₹1,600)' },
     { entryFee: 3200, pointValue: 40, name: 'Pool 101 - Gold (₹3,200)' },
     { entryFee: 6000, pointValue: 75, name: 'Pool 101 - Platinum (₹6,000)' },
     { entryFee: 10000, pointValue: 125, name: 'Pool 101 - Diamond (₹10,000)' },
@@ -81,6 +85,7 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
     { entryFee: 20, pointValue: 0.25, name: 'Deals Rummy - Micro (₹20)' },
     { entryFee: 160, pointValue: 2, name: 'Deals Rummy - Bronze (₹160)' },
     { entryFee: 800, pointValue: 10, name: 'Deals Rummy - Silver (₹800)' },
+    { entryFee: 1600, pointValue: 20, name: 'Deals Rummy - Ruby (₹1,600)' },
     { entryFee: 3200, pointValue: 40, name: 'Deals Rummy - Gold (₹3,200)' },
     { entryFee: 6000, pointValue: 75, name: 'Deals Rummy - Platinum (₹6,000)' },
     { entryFee: 10000, pointValue: 125, name: 'Deals Rummy - Diamond (₹10,000)' },
@@ -1133,6 +1138,7 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
     tx.update(playerRef, {
       cards: updatedHand,
       cardCount: updatedHand.length,
+      turnsCount: (playerData.turnsCount || 0) + 1,
     });
 
     tx.update(gameRef, {
@@ -1344,50 +1350,108 @@ export async function playBotTurn(gameId: string, botUid: string): Promise<void>
 }
 
 /**
- * Automatically deducts 14% platform fee and credits net winning amount directly to winner's wallet
- * Policy: "14% platform fee will be automatically deducted from winning amount before crediting to winner"
+ * Calculate drop penalty and rupee loss:
+ * First Drop (0 turns played & haven't drawn card): 20 points = 25% of entryFee
+ * Middle Drop (1+ turns played or already drew card): 40 points = 50% of entryFee
  */
-async function creditWinnerPayout(
+export function calculateDropPenalty(
+  entryFee: number,
+  pointValue: number,
+  turnsCount: number = 0,
+  hasDrawnCurrentTurn: boolean = false
+): { isFirstDrop: boolean; points: number; penaltyRupees: number } {
+  const isFirstDrop = (turnsCount || 0) === 0 && !hasDrawnCurrentTurn;
+  const points = isFirstDrop ? 20 : 40;
+  const penaltyRupees = isFirstDrop
+    ? Math.round((entryFee || 20) * 0.25 * 100) / 100
+    : Math.round((entryFee || 20) * 0.50 * 100) / 100;
+
+  return { isFirstDrop, points, penaltyRupees: Math.max(1, penaltyRupees) };
+}
+
+/**
+ * Automatically deducts 14% platform fee and credits net winning amount directly to winner's wallet.
+ * CRITICAL FIX: Also refunds the winner's entry buy-in so winning ALWAYS increases player's wallet balance!
+ */
+export async function creditWinnerPayout(
   gameId: string,
   gameMode: string,
   winnerUid: string,
   grossWin: number,
   platformFee: number,
   playerNetShare: number,
+  entryBuyInRefund: number = 0,
+  breakdown?: { depositDeduct: number; bonusDeduct?: number; winDeduct: number; total?: number } | null,
   pointsWon: number = 0
 ): Promise<void> {
-  if (playerNetShare <= 0) return;
+  if (!winnerUid || winnerUid.startsWith('bot_')) return;
   try {
     const winnerWalletRef = doc(db, 'wallets', winnerUid);
     const wSnap = await getDoc(winnerWalletRef);
     if (wSnap.exists()) {
-      const curWin = wSnap.data().winBalance || 0;
-      const curRewardPoints = wSnap.data().rewardPoints || 0;
+      const wData = wSnap.data() as UserWallet;
+      const curWin = wData.winBalance || 0;
+      const curRewardPoints = wData.rewardPoints || 0;
+      const curDep = wData.depositBalance || 0;
+      const curBonus = wData.bonusBalance || 0;
+
+      // Determine buy-in refund amounts to restore entry fee
+      let depRefund = 0;
+      let bonusRefund = 0;
+      let winRefund = 0;
+      if (entryBuyInRefund > 0) {
+        if (breakdown) {
+          depRefund = breakdown.depositDeduct || 0;
+          bonusRefund = breakdown.bonusDeduct || 0;
+          winRefund = breakdown.winDeduct || 0;
+        } else {
+          depRefund = entryBuyInRefund;
+        }
+      }
+
       await updateDoc(winnerWalletRef, {
-        winBalance: curWin + playerNetShare,
+        winBalance: curWin + playerNetShare + winRefund,
+        depositBalance: curDep + depRefund,
+        bonusBalance: curBonus + bonusRefund,
         rewardPoints: curRewardPoints + pointsWon,
         updatedAt: new Date().toISOString(),
       });
     }
-    const winTxRef = doc(collection(db, 'transactions'));
-    await setDoc(winTxRef, {
-      id: winTxRef.id,
-      uid: winnerUid,
-      type: 'game_win',
-      amount: playerNetShare,
-      status: 'completed',
-      description: `Winnings for ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (+${pointsWon} Pts, Gross: ₹${grossWin}, 14% Platform Fee: -₹${platformFee})`,
-      referenceId: gameId,
-      createdAt: new Date().toISOString(),
-    });
+
+    if (playerNetShare > 0) {
+      const winTxRef = doc(collection(db, 'transactions'));
+      await setDoc(winTxRef, {
+        id: winTxRef.id,
+        uid: winnerUid,
+        type: 'game_win',
+        amount: playerNetShare,
+        status: 'completed',
+        description: `Winnings for ${gameMode.toUpperCase()} match #${gameId.slice(-6)} (+${pointsWon} Pts, Gross: ₹${grossWin}, 14% Platform Fee: -₹${platformFee})`,
+        referenceId: gameId,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    if (entryBuyInRefund > 0) {
+      const refundTxRef = doc(collection(db, 'transactions'));
+      await setDoc(refundTxRef, {
+        id: refundTxRef.id,
+        uid: winnerUid,
+        type: 'refund',
+        amount: entryBuyInRefund,
+        status: 'completed',
+        description: `Entry buy-in returned for winning match #${gameId.slice(-6)} (+₹${entryBuyInRefund})`,
+        referenceId: gameId,
+        createdAt: new Date().toISOString(),
+      });
+    }
   } catch (err) {
     console.error('Error crediting winner wallet:', err);
   }
 }
 
 /**
- * Automatically deducts loss amount and records transaction for losing players
- * "हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है" -> Ensures losing players have money deducted and recorded in wallet.
+ * Automatically settles loser loss and refunds any remaining buy-in
  */
 export async function settleLoserLoss(
   gameId: string,
@@ -1396,15 +1460,25 @@ export async function settleLoserLoss(
   lossPoints: number,
   pointValue: number,
   entryFee: number,
-  entryPaid: number = 0
+  entryPaid: number = 0,
+  breakdown?: { depositDeduct: number; bonusDeduct?: number; winDeduct: number; total?: number } | null
 ): Promise<number> {
   if (!loserUid || loserUid.startsWith('bot_')) return 0;
 
-  // Monetary loss for points rummy: lossPoints * pointValue
-  // Capped at entryFee if entryFee > 0, else max 80 * pointValue
-  const maxCap = entryFee > 0 ? entryFee : 80 * (pointValue || 1);
-  const calculatedLoss = Math.min(maxCap, Math.max(1, Math.round(lossPoints * (pointValue || 1) * 100) / 100));
-  const finalLossAmount = calculatedLoss > 0 ? calculatedLoss : (entryFee > 0 ? entryFee : 20);
+  // Exact drop calculation: 20 pts = 25% of entryFee, 40 pts = 50% of entryFee
+  let calculatedLoss = 0;
+  if (lossPoints === 20 && entryFee > 0) {
+    calculatedLoss = Math.round(entryFee * 0.25 * 100) / 100;
+  } else if (lossPoints === 40 && entryFee > 0) {
+    calculatedLoss = Math.round(entryFee * 0.50 * 100) / 100;
+  } else if (lossPoints >= 80 && entryFee > 0) {
+    calculatedLoss = entryFee;
+  } else {
+    const pv = pointValue > 0 ? pointValue : (entryFee > 0 ? entryFee / 80 : 0.25);
+    calculatedLoss = Math.min(entryFee > 0 ? entryFee : 80 * pv, Math.round(lossPoints * pv * 100) / 100);
+  }
+
+  const finalLossAmount = Math.max(1, calculatedLoss);
 
   try {
     const loserWalletRef = doc(db, 'wallets', loserUid);
@@ -1413,8 +1487,7 @@ export async function settleLoserLoss(
     const wData = wSnap.data() as UserWallet;
 
     if (entryPaid > 0) {
-      // Player paid entryFee up front (e.g. ₹20 or ₹160).
-      // If actual loss is less than buy-in, refund the difference!
+      // Player paid buy-in up front: refund the difference (e.g. ₹20 buy-in - ₹5 drop = ₹15 refund)
       const refund = Math.max(0, Math.round((entryPaid - finalLossAmount) * 100) / 100);
       if (refund > 0) {
         await updateDoc(loserWalletRef, {
@@ -1428,14 +1501,13 @@ export async function settleLoserLoss(
           type: 'refund',
           amount: refund,
           status: 'completed',
-          description: `Partial loss refund for match #${gameId.slice(-6)} (Saved ₹${refund} from ₹${entryPaid} buy-in)`,
+          description: `Partial loss refund for match #${gameId.slice(-6)} (Saved ₹${refund} from ₹${entryPaid} buy-in, loss: ₹${finalLossAmount})`,
           referenceId: gameId,
           createdAt: new Date().toISOString(),
         });
       }
     } else {
-      // Entry fee was NOT deducted yet (e.g. practice bot or direct table join):
-      // Deduct finalLossAmount directly from wallet!
+      // Deduct directly from wallet
       const curDep = wData.depositBalance || 0;
       const curBonus = wData.bonusBalance || 0;
       const curWin = wData.winBalance || 0;
@@ -1453,7 +1525,6 @@ export async function settleLoserLoss(
       });
     }
 
-    // Always record game_loss transaction for clear audit and ledger display
     const lossTxRef = doc(collection(db, 'transactions'));
     await setDoc(lossTxRef, {
       id: lossTxRef.id,
@@ -1484,7 +1555,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
   const playersSnap = await getDocs(playersRef);
   const discoveredUids = playersSnap.docs.map((d) => d.id);
 
-  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string; pointsWon?: number } | null> => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; entryBuyInRefund: number; breakdown?: any; gameMode: string; pointsWon?: number; pointValue: number; entryFee: number } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
     if (!gameSnap.exists()) return null;
@@ -1492,7 +1563,6 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 
     if (game.status !== 'PLAYING' || game.turnUid !== currentTurnUid) return null;
 
-    // Read all players inside transaction
     const allPlayerUids = Array.from(new Set([
       ...(game.playerUids || []),
       ...discoveredUids,
@@ -1512,7 +1582,6 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 
     // 2. ALL WRITES AFTER
     if (extCount < 2) {
-      // Add 5 seconds extension
       tx.update(gameRef, {
         turnDeadline: now + 5000,
         turnExtensionCount: extCount + 1,
@@ -1520,45 +1589,57 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
       });
       return null;
     } else {
-      // Auto-drop the player!
+      // Auto-drop timed out player
+      const timedOutPlayer = allPlayers.find((p) => p.uid === currentTurnUid);
+      const isFirstDrop = (timedOutPlayer?.turnsCount || 0) === 0 && !game.hasDrawn;
+      const dropPts = isFirstDrop ? 20 : 40;
+      const entryFee = game.entryFee || 20;
+      const dropPenaltyRupees = isFirstDrop
+        ? Math.round(entryFee * 0.25 * 100) / 100
+        : Math.round(entryFee * 0.50 * 100) / 100;
+
       tx.update(playerRef, {
         status: 'dropped',
-        score: 40, // 40 points middle/auto-drop penalty
+        score: dropPts,
+        dropPenalty: dropPts,
+        dropPenaltyRupees,
+        isFirstDrop,
       });
 
-      // Pass turn to next player
       const remainingActive = allPlayers
         .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
         .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
       if (remainingActive.length <= 1) {
-        // Last player remaining wins!
         const winner = remainingActive[0];
         if (winner) {
           const scores: Record<string, number> = {};
           const penalties: Record<string, string> = {};
           const payouts: Record<string, number> = {};
+          let totalGrossPot = 0;
           let totalPointsLost = 0;
 
           for (const p of allPlayers) {
             if (p.uid === winner.uid) {
               penalties[p.uid] = 'Winner';
             } else {
-              const dropPts = p.uid === currentTurnUid ? 40 : (p.score || 40);
-              scores[p.uid] = dropPts;
-              penalties[p.uid] = `Dropped (${dropPts} pts)`;
-              totalPointsLost += dropPts;
+              const pDropPts = p.uid === currentTurnUid ? dropPts : (p.score || 40);
+              const pLossRupees = p.uid === currentTurnUid
+                ? dropPenaltyRupees
+                : (p.dropPenaltyRupees || (pDropPts === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100));
+              scores[p.uid] = pDropPts;
+              penalties[p.uid] = `Auto-Dropped (${pDropPts} pts, -₹${pLossRupees})`;
+              totalGrossPot += pLossRupees;
+              totalPointsLost += pDropPts;
             }
           }
-          // Winner's score tracks points won from all opponents
           scores[winner.uid] = totalPointsLost;
 
-          const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
-          let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
           const feePercent = 14;
-          const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
-          const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+          const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+          const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
           payouts[winner.uid] = playerNetShare;
+          const winnerBuyInRefund = winner.entryPaid || entryFee;
 
           tx.update(gameRef, {
             status: 'RESULT',
@@ -1568,19 +1649,31 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
               winnerUid: winner.uid,
               scores,
               penalties,
-              grossWin,
+              grossWin: totalGrossPot,
               platformFee,
               feePercent,
               adminShare: platformFee,
               playerNetShare,
               payouts,
+              winnerBuyInRefund,
               settlementStatus: 'completed',
               completedAt: new Date().toISOString(),
             },
             updatedAt: new Date().toISOString(),
           });
 
-          return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode, pointsWon: totalPointsLost };
+          return {
+            winnerUid: winner.uid,
+            grossWin: totalGrossPot,
+            platformFee,
+            playerNetShare,
+            entryBuyInRefund: winnerBuyInRefund,
+            breakdown: winner.deductionBreakdown,
+            gameMode: game.mode,
+            pointsWon: totalPointsLost,
+            pointValue: game.pointValue || (entryFee / 80),
+            entryFee,
+          };
         }
         return null;
       } else {
@@ -1606,6 +1699,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
       winnerToCredit.grossWin,
       winnerToCredit.platformFee,
       winnerToCredit.playerNetShare,
+      winnerToCredit.entryBuyInRefund,
+      winnerToCredit.breakdown,
       winnerToCredit.pointsWon
     );
 
@@ -1620,9 +1715,10 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
             winnerToCredit.gameMode,
             pData.uid,
             lossPts,
-            1,
-            20,
-            pData.entryPaid || 0
+            winnerToCredit.pointValue,
+            winnerToCredit.entryFee,
+            pData.entryPaid || winnerToCredit.entryFee,
+            pData.deductionBreakdown
           );
         }
       }
@@ -1633,7 +1729,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 }
 
 /**
- * Manual Player Drop (First drop = 20 pts, Middle drop = 40 pts)
+ * Manual Player Drop (First drop = 20 pts = 25% of stake, Middle drop = 40 pts = 50% of stake)
+ * The opponent gets the dropped amount minus 14% platform commission, PLUS keeps their full buy-in!
  */
 export async function dropGame(gameId: string, playerUid: string): Promise<void> {
   const gameRef = doc(db, 'games', gameId);
@@ -1643,7 +1740,7 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
   const pSnap = await getDocs(playersRef);
   const discoveredUids = pSnap.docs.map((d) => d.id);
 
-  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; gameMode: string; pointsWon?: number } | null> => {
+  const winnerToCredit = await runTransaction(db, async (tx): Promise<{ winnerUid: string; grossWin: number; platformFee: number; playerNetShare: number; entryBuyInRefund: number; breakdown?: any; gameMode: string; pointsWon?: number; pointValue: number; entryFee: number } | null> => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
     if (!gameSnap.exists()) return null;
@@ -1651,8 +1748,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
 
     const playerSnap = await tx.get(playerRef);
     if (!playerSnap.exists()) return null;
+    const playerData = playerSnap.data() as GamePlayerState;
 
-    // Read all players inside transaction
     const allPlayerUids = Array.from(new Set([
       ...(game.playerUids || []),
       ...discoveredUids,
@@ -1667,14 +1764,28 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       }
     }
 
-    // Penalty: First Drop = 20 pts, Middle Drop = 40 pts
-    const penalty = game.openDeck.length <= 1 ? 20 : 40;
+    // Determine First Drop vs Middle Drop:
+    // If player has played 0 turns AND (has not drawn yet on their turn or it is before their turn): FIRST DROP!
+    // If player has already played 1+ turns OR has drawn a card: MIDDLE DROP!
+    const hasDrawnThisTurn = game.turnUid === playerUid && Boolean(game.hasDrawn);
+    const dropInfo = calculateDropPenalty(
+      game.entryFee || 20,
+      game.pointValue || ((game.entryFee || 20) / 80),
+      playerData.turnsCount || 0,
+      hasDrawnThisTurn
+    );
+
+    const penalty = dropInfo.points;
+    const dropPenaltyRupees = dropInfo.penaltyRupees;
+    const entryFee = game.entryFee || 20;
 
     // 2. ALL WRITES AFTER
     tx.update(playerRef, {
       status: 'dropped',
       score: penalty,
       dropPenalty: penalty,
+      dropPenaltyRupees,
+      isFirstDrop: dropInfo.isFirstDrop,
     });
 
     const remainingActive = allPlayers
@@ -1687,27 +1798,31 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
         const scores: Record<string, number> = {};
         const penalties: Record<string, string> = {};
         const payouts: Record<string, number> = {};
+        let totalGrossPot = 0;
         let totalPointsLost = 0;
 
         for (const p of allPlayers) {
           if (p.uid === winner.uid) {
             penalties[p.uid] = 'Winner';
           } else {
-            const dropPts = p.uid === playerUid ? penalty : (p.score || penalty);
-            scores[p.uid] = dropPts;
-            penalties[p.uid] = `Dropped (${dropPts} pts)`;
-            totalPointsLost += dropPts;
+            const pDropPts = p.uid === playerUid ? penalty : (p.score || penalty);
+            const pLossRupees = p.uid === playerUid
+              ? dropPenaltyRupees
+              : (p.dropPenaltyRupees || (pDropPts === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100));
+            scores[p.uid] = pDropPts;
+            penalties[p.uid] = `${pDropPts === 20 ? 'First Drop' : 'Middle Drop'} (${pDropPts} pts, -₹${pLossRupees})`;
+            totalGrossPot += pLossRupees;
+            totalPointsLost += pDropPts;
           }
         }
-        // Winner's score tracks points won
         scores[winner.uid] = totalPointsLost;
 
-        const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
-        let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
+        // 14% platform fee automatically deducted from winnings
         const feePercent = 14;
-        const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
-        const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+        const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+        const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
         payouts[winner.uid] = playerNetShare;
+        const winnerBuyInRefund = winner.entryPaid || entryFee;
 
         tx.update(gameRef, {
           status: 'RESULT',
@@ -1717,19 +1832,31 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
             winnerUid: winner.uid,
             scores,
             penalties,
-            grossWin,
+            grossWin: totalGrossPot,
             platformFee,
             feePercent,
             adminShare: platformFee,
             playerNetShare,
             payouts,
+            winnerBuyInRefund,
             settlementStatus: 'completed',
             completedAt: new Date().toISOString(),
           },
           updatedAt: new Date().toISOString(),
         });
 
-        return { winnerUid: winner.uid, grossWin, platformFee, playerNetShare, gameMode: game.mode, pointsWon: totalPointsLost };
+        return {
+          winnerUid: winner.uid,
+          grossWin: totalGrossPot,
+          platformFee,
+          playerNetShare,
+          entryBuyInRefund: winnerBuyInRefund,
+          breakdown: winner.deductionBreakdown,
+          gameMode: game.mode,
+          pointsWon: totalPointsLost,
+          pointValue: game.pointValue || (entryFee / 80),
+          entryFee,
+        };
       }
       return null;
     } else if (game.turnUid === playerUid) {
@@ -1756,6 +1883,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       winnerToCredit.grossWin,
       winnerToCredit.platformFee,
       winnerToCredit.playerNetShare,
+      winnerToCredit.entryBuyInRefund,
+      winnerToCredit.breakdown,
       winnerToCredit.pointsWon
     );
 
@@ -1770,14 +1899,44 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
             winnerToCredit.gameMode,
             pData.uid,
             lossPts,
-            1,
-            20,
-            pData.entryPaid || 0
+            winnerToCredit.pointValue,
+            winnerToCredit.entryFee,
+            pData.entryPaid || winnerToCredit.entryFee,
+            pData.deductionBreakdown
           );
         }
       }
     } catch (e) {
       console.warn('Error settling drop losses:', e);
+    }
+  } else {
+    // Multi-player match: drop occurred but match continues with other players.
+    // Settle this dropping player's loss immediately!
+    const dropInfo = calculateDropPenalty(
+      pSnap.docs.length > 0 ? 20 : 20,
+      0.25,
+      0,
+      false
+    );
+    try {
+      const gSnap = await getDoc(gameRef);
+      const gData = gSnap.data() as GameState;
+      const pData = pSnap.docs.find((d) => d.id === playerUid)?.data() as GamePlayerState;
+      if (gData && pData) {
+        const pLoss = pData.score || 20;
+        await settleLoserLoss(
+          gameId,
+          gData.mode,
+          playerUid,
+          pLoss,
+          gData.pointValue || (gData.entryFee / 80),
+          gData.entryFee,
+          pData.entryPaid || gData.entryFee,
+          pData.deductionBreakdown
+        );
+      }
+    } catch (e) {
+      console.warn('Error settling interim drop loss:', e);
     }
   }
 }
@@ -1811,42 +1970,44 @@ export async function declareHand(
     const payouts: Record<string, number> = {};
 
     let totalPointsLost = 0;
+    let totalGrossPot = 0;
+    const entryFee = game.entryFee || 20;
+    const pointVal = game.pointValue || (entryFee / 80);
 
     for (const p of allPlayers) {
       if (p.uid === playerUid) {
         penalties[p.uid] = 'Winner';
       } else if (p.status === 'dropped') {
         const dropPts = p.score || 20;
+        const dropRupees = p.dropPenaltyRupees || (dropPts === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100);
         scores[p.uid] = dropPts;
-        penalties[p.uid] = `Dropped (${dropPts} pts)`;
+        penalties[p.uid] = `Dropped (${dropPts} pts, -₹${dropRupees})`;
         totalPointsLost += dropPts;
+        totalGrossPot += dropRupees;
       } else {
         const lossPts = calculateLossPoints(p.cards || [], wildJokerRank);
+        const lossRupees = Math.min(entryFee, Math.max(1, Math.round(lossPts * pointVal * 100) / 100));
         scores[p.uid] = lossPts;
-        penalties[p.uid] = `${lossPts} pts loss`;
+        penalties[p.uid] = `${lossPts} pts loss (-₹${lossRupees})`;
         totalPointsLost += lossPts;
+        totalGrossPot += lossRupees;
       }
     }
-    // 20 points per set requirement:
-    // "और हर सेट पर पॉइंट्स मिलेंगे। जो भी एक सेट पर मिलेगा, एक सेट पर 20 पॉइंट्स मिलेंगे।"
+
     const winnerSets = cardGroups.filter((g) => isValidSet(g, wildJokerRank)).length;
     const winnerSetPoints = winnerSets * 20;
     const totalWinnerPoints = totalPointsLost + winnerSetPoints;
 
-    // Winner's score tracks points won + set bonus
     scores[playerUid] = totalWinnerPoints;
 
-    // Gross winnings calculation based on total table prize pot (or points value if higher)
-    const totalPrizePot = (game.entryFee || 0) * allPlayers.length;
-    let grossWin = Math.max(totalPrizePot, totalPointsLost * (game.pointValue || 1));
-
     // 14% platform fee automatically deducted from winnings
-    // "जो प्लेयर विन करेगा, उसमें प्लेटफॉर्म उसी में होगा 14% प्ले ऑटोमेटिक कट जाएगा... पहले उसका 14% कट जाएगा उसके बाद ही उसको विन मिलेगी"
     const feePercent = 14;
-    const platformFee = Math.round(grossWin * (feePercent / 100) * 100) / 100;
-    const playerNetShare = Math.round((grossWin - platformFee) * 100) / 100;
+    const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+    const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
     const adminShare = platformFee;
     payouts[playerUid] = playerNetShare;
+    const winnerPlayer = allPlayers.find((p) => p.uid === playerUid);
+    const winnerBuyInRefund = winnerPlayer?.entryPaid || entryFee;
 
     await updateDoc(gameRef, {
       status: 'RESULT',
@@ -1856,12 +2017,13 @@ export async function declareHand(
         winnerUid: playerUid,
         scores,
         penalties,
-        grossWin,
+        grossWin: totalGrossPot,
         platformFee,
         feePercent,
         adminShare,
         playerNetShare,
         payouts,
+        winnerBuyInRefund,
         winnerSets,
         winnerSetPoints,
         settlementStatus: 'completed',
@@ -1875,21 +2037,22 @@ export async function declareHand(
       score: 0,
     });
 
-    // Credit winner's wallet winBalance directly with 14% fee deducted net winnings and loyalty points (including 20 pts per set)
-    if (playerNetShare > 0) {
+    // Credit winner's wallet: WINNER GETS THEIR BUY-IN REFUNDED + NET WINNINGS IN WINBALANCE!
+    if (playerNetShare > 0 || winnerBuyInRefund > 0) {
       await creditWinnerPayout(
         gameId,
         game.mode,
         playerUid,
-        grossWin,
+        totalGrossPot,
         platformFee,
         playerNetShare,
+        winnerBuyInRefund,
+        winnerPlayer?.deductionBreakdown,
         totalWinnerPoints
       );
     }
 
-    // Automatically deduct money from all losers & award set points:
-    // "हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है"
+    // Settle money for all losers:
     for (const p of allPlayers) {
       if (p.uid !== playerUid && !p.isBot) {
         const lossPts = scores[p.uid] || 20;
@@ -1898,9 +2061,10 @@ export async function declareHand(
           game.mode,
           p.uid,
           lossPts,
-          game.pointValue || 1,
-          game.entryFee || 20,
-          p.entryPaid || 0
+          pointVal,
+          entryFee,
+          p.entryPaid || entryFee,
+          p.deductionBreakdown
         );
 
         // Award 20 points per set for any valid sets formed by loser
@@ -1926,10 +2090,11 @@ export async function declareHand(
 
     return validation;
   } else {
-    // Requirement #50: Invalid Declaration Penalty: EXACTLY 80 POINTS
+    // Invalid Declaration Penalty: EXACTLY 80 POINTS
     await updateDoc(playerRef, {
       score: 80,
       dropPenalty: 80,
+      dropPenaltyRupees: game.entryFee || 20,
       status: 'dropped',
     });
 

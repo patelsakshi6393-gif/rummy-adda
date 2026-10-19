@@ -25,6 +25,7 @@ import {
   sendPlayerHeartbeat,
   startPracticeBotMatch,
   playBotTurn,
+  calculateDropPenalty,
 } from '@/lib/game-service';
 import {
   isPureSequence,
@@ -594,6 +595,12 @@ export default function GameRoomPage() {
 
   // Open Declare Modal with grouped hand
   const handleOpenDeclare = () => {
+    if (!game || !user || actionLoading) return;
+    if (!isMyTurn) {
+      setToastNotification('👉 Declare / Show ke liye aapki turn honi chahiye!');
+      setTimeout(() => setToastNotification(null), 3000);
+      return;
+    }
     if (!myPlayer?.cards || myPlayer.cards.length === 0) return;
     const cards = handGroups.flat().length > 0 ? handGroups.flat() : [...myPlayer.cards];
     let finishCard: Card | null = null;
@@ -665,7 +672,26 @@ export default function GameRoomPage() {
   };
 
   const handleDiscard = async () => {
-    if (!game || !user || !isMyTurn || !hasDrawn || selectedCardIds.length === 0 || actionLoading) return;
+    if (!game || !user || actionLoading) return;
+
+    if (!isMyTurn) {
+      setToastNotification('👉 Opponent ki turn chal rahi hai, wait karein!');
+      setTimeout(() => setToastNotification(null), 3000);
+      return;
+    }
+
+    if (!hasDrawn) {
+      setToastNotification('👉 Pehle Closed Deck ya Open Pile se card draw karein!');
+      setTimeout(() => setToastNotification(null), 3000);
+      return;
+    }
+
+    if (selectedCardIds.length === 0) {
+      setToastNotification('👉 Discard karne ke liye kisi card par tap karein!');
+      setTimeout(() => setToastNotification(null), 3000);
+      return;
+    }
+
     const cardIdToDiscard = selectedCardIds[0];
     const cardObj = myPlayer?.cards?.find((c) => c.id === cardIdToDiscard);
     if (!cardObj) return;
@@ -836,7 +862,7 @@ export default function GameRoomPage() {
 
             <button
               onClick={() => setShowDropModal(true)}
-              disabled={!isMyTurn || game?.status !== 'PLAYING'}
+              disabled={game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
               className="py-1 sm:py-1.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-[10px] sm:text-xs font-bold transition-all disabled:opacity-40"
             >
               DROP
@@ -992,7 +1018,7 @@ export default function GameRoomPage() {
 
                   {/* ACTIVE PLAYING CENTER */}
                   {game?.status === 'PLAYING' && (
-                    <div className="flex items-center gap-3 sm:gap-8">
+                    <div className="flex items-center gap-2 sm:gap-8 scale-85 sm:scale-100 origin-center">
                       {/* Wild Joker Display */}
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-[9px] uppercase font-black tracking-wider text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/30">
@@ -1322,75 +1348,137 @@ export default function GameRoomPage() {
                     </div>
                   )}
 
-                  {/* Action Controls Bar - Solid Dock with Fixed Visibility */}
-                  {game?.status === 'PLAYING' && (
-                    <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 py-1 px-3 bg-black/85 backdrop-blur-md rounded-xl sm:rounded-2xl border border-amber-500/40 shadow-2xl shrink-0 z-40 my-0.5 flex-wrap">
-                      <button
-                        onClick={handleAutoSortHand}
-                        className="py-1 px-2.5 sm:py-1.5 sm:px-3 rounded-lg sm:rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] sm:text-xs transition-colors flex items-center gap-1"
-                        title="Sort cards into best melds"
-                      >
-                        <Sparkles className="w-3 h-3 text-amber-400" />
-                        <span>SORT</span>
-                      </button>
+                  {/* Action Controls Bar - Solid Guaranteed Visible 4-Button Dock */}
+                  {game?.status === 'PLAYING' && (() => {
+                    const dropInfo = calculateDropPenalty(
+                      game?.entryFee || 20,
+                      game?.pointValue || ((game?.entryFee || 20) / 80),
+                      myPlayer?.turnsCount || 0,
+                      isMyTurn && Boolean(hasDrawn)
+                    );
 
-                      {/* Live Sets Made Bonus Counter */}
-                      {/* "और हर सेट पर पॉइंट्स मिलेंगे। जो भी एक सेट पर मिलेगा, एक सेट पर 20 पॉइंट्स मिलेंगे।" */}
-                      <div
-                        className="py-0.5 px-2 sm:py-1 sm:px-2.5 rounded-lg sm:rounded-xl bg-amber-500/15 border border-amber-500/30 text-[10px] sm:text-xs flex items-center gap-1 font-bold text-amber-300"
-                        title="Every completed set gives +20 Points!"
-                      >
-                        <span>⭐</span>
-                        <span className="hidden xs:inline text-slate-300">Sets:</span>
-                        <span className="font-mono font-black text-amber-300">
-                          {handGroups.filter((g) => isValidSet(g, wildJokerRank)).length}
-                        </span>
-                        <span className="text-emerald-400 font-mono font-bold">
-                          (+{handGroups.filter((g) => isValidSet(g, wildJokerRank)).length * 20} Pts)
-                        </span>
+                    return (
+                      <div className="w-full max-w-xl mx-auto flex flex-col items-center gap-1 shrink-0 z-40 my-0.5 px-1">
+                        {/* Top Thin Status Strip: Sets Bonus & Penalty Goal */}
+                        <div className="flex items-center justify-between w-full px-1 text-[9px] sm:text-xs">
+                          {/* Live Sets Made Bonus Counter (+20 Pts per Set) */}
+                          <div
+                            className="py-0.5 px-2 rounded-full bg-amber-500/15 border border-amber-500/30 text-[9px] sm:text-[10px] flex items-center gap-1 font-bold text-amber-300"
+                            title="Every completed set gives +20 Points!"
+                          >
+                            <span>⭐</span>
+                            <span className="text-slate-300">Sets:</span>
+                            <span className="font-mono font-black text-amber-300">
+                              {handGroups.filter((g) => isValidSet(g, wildJokerRank)).length}
+                            </span>
+                            <span className="text-emerald-400 font-mono font-bold">
+                              (+{handGroups.filter((g) => isValidSet(g, wildJokerRank)).length * 20} Pts)
+                            </span>
+                          </div>
+
+                          {/* Live Hand Penalty Score */}
+                          <button
+                            type="button"
+                            onClick={() => setShowHowToPlayModal(true)}
+                            className="py-0.5 px-2.5 rounded-full bg-black/80 border border-white/15 hover:border-amber-400 text-[9px] sm:text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Unmatched cards penalty score (Goal: 0 Pts to win)"
+                          >
+                            <span className="text-slate-400">Penalty:</span>
+                            <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {currentHandPenalty} Pts
+                            </span>
+                            <span className="text-amber-300 text-[8px] hidden xs:inline">(Goal: 0 🏆)</span>
+                          </button>
+                        </div>
+
+                        {/* 4 Primary Player Action Buttons: DROP | SORT | DISCARD | DECLARE */}
+                        <div className="w-full grid grid-cols-4 gap-1 sm:gap-2 bg-black/85 backdrop-blur-md p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-amber-500/40 shadow-2xl">
+                          {/* 1. DROP BUTTON */}
+                          <button
+                            type="button"
+                            onClick={() => setShowDropModal(true)}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className="py-1.5 sm:py-2 px-1 rounded-lg sm:rounded-xl bg-gradient-to-b from-rose-600/30 to-rose-900/40 hover:from-rose-600/50 hover:to-rose-800/60 border border-rose-500/60 text-rose-200 font-black text-[10px] sm:text-xs uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
+                            title="Drop hand"
+                          >
+                            <span className="tracking-wide">DROP</span>
+                            <span className="text-[8px] sm:text-[9px] font-mono font-semibold text-rose-300 mt-0.5">
+                              -₹{dropInfo.penaltyRupees}
+                            </span>
+                          </button>
+
+                          {/* 2. SORT BUTTON */}
+                          <button
+                            type="button"
+                            onClick={handleAutoSortHand}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className="py-1.5 sm:py-2 px-1 rounded-lg sm:rounded-xl bg-gradient-to-b from-purple-600/30 to-purple-900/40 hover:from-purple-600/50 hover:to-purple-800/60 border border-purple-500/60 text-purple-200 font-black text-[10px] sm:text-xs uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
+                            title="Sort cards automatically into sequences and sets"
+                          >
+                            <div className="flex items-center gap-0.5">
+                              <Sparkles className="w-3 h-3 text-amber-400" />
+                              <span className="tracking-wide">SORT</span>
+                            </div>
+                            <span className="text-[7px] sm:text-[8px] text-purple-300/80 mt-0.5 hidden xs:inline">Auto Meld</span>
+                          </button>
+
+                          {/* 3. DISCARD BUTTON */}
+                          <button
+                            type="button"
+                            onClick={handleDiscard}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className={`py-1.5 sm:py-2 px-1 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none ${
+                              isMyTurn && hasDrawn && selectedCardIds.length > 0
+                                ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
+                                : isMyTurn && hasDrawn
+                                ? 'bg-amber-500/30 border-2 border-amber-400 text-amber-300 cursor-pointer animate-pulse'
+                                : isMyTurn
+                                ? 'bg-white/15 hover:bg-white/20 text-white border border-white/20 cursor-pointer'
+                                : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
+                            }`}
+                            title={
+                              !isMyTurn
+                                ? "Opponent's turn"
+                                : !hasDrawn
+                                ? 'Draw a card first'
+                                : selectedCardIds.length === 0
+                                ? 'Select card to discard'
+                                : 'Discard selected card'
+                            }
+                          >
+                            <span className="tracking-wide">DISCARD</span>
+                            <span className="text-[7px] sm:text-[8px] mt-0.5 truncate max-w-full font-medium">
+                              {isMyTurn
+                                ? !hasDrawn
+                                  ? 'Draw 1st'
+                                  : selectedCardIds.length > 0
+                                  ? '✓ Ready'
+                                  : 'Select Card'
+                                : 'Wait'}
+                            </span>
+                          </button>
+
+                          {/* 4. DECLARE / SHOW BUTTON */}
+                          <button
+                            type="button"
+                            onClick={handleOpenDeclare}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className={`py-1.5 sm:py-2 px-1 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none ${
+                              isMyTurn
+                                ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 text-black cursor-pointer shadow-emerald-500/40 ring-1 ring-emerald-300'
+                                : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
+                            }`}
+                            title="Declare Hand Show"
+                          >
+                            <span className="tracking-wide">DECLARE</span>
+                            <span className="text-[7px] sm:text-[8px] mt-0.5 truncate max-w-full font-medium">
+                              {isMyTurn ? 'Show Hand' : 'Wait'}
+                            </span>
+                          </button>
+                        </div>
                       </div>
-
-                      {/* Live Hand Penalty Score & Explanatory Button */}
-                      <button
-                        type="button"
-                        onClick={() => setShowHowToPlayModal(true)}
-                        className="py-0.5 px-2 sm:py-1 sm:px-2.5 rounded-lg sm:rounded-xl bg-black/80 border border-amber-500/30 hover:border-amber-400 text-[10px] sm:text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                        title="In Rummy, unmatched cards are penalty points! Click to learn."
-                      >
-                        <span className="text-slate-400 text-[9px] sm:text-[11px]">Penalty:</span>
-                        <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {currentHandPenalty} Pts
-                        </span>
-                        <span className="text-[9px] text-amber-300 font-bold hidden sm:inline">
-                          (Goal: 0 Pts 🏆)
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={handleDiscard}
-                        disabled={!isMyTurn || !hasDrawn || selectedCardIds.length === 0 || actionLoading}
-                        className={`py-1 px-3 sm:py-1.5 sm:px-4 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow-md transition-all active:scale-95 ${
-                          isMyTurn && hasDrawn && selectedCardIds.length > 0
-                            ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
-                            : 'bg-white/10 text-slate-400 cursor-not-allowed opacity-50'
-                        }`}
-                      >
-                        DISCARD
-                      </button>
-
-                      <button
-                        onClick={handleOpenDeclare}
-                        disabled={!isMyTurn || actionLoading}
-                        className={`py-1 px-3 sm:py-1.5 sm:px-4 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs uppercase shadow-md transition-all hover:scale-105 active:scale-95 ${
-                          isMyTurn
-                            ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 text-black cursor-pointer shadow-emerald-500/30'
-                            : 'bg-white/10 text-slate-400 cursor-not-allowed opacity-50'
-                        }`}
-                      >
-                        DECLARE / SHOW
-                      </button>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -1537,35 +1625,71 @@ export default function GameRoomPage() {
         {/* 
           DROP CONFIRMATION MODAL 
         */}
-        {showDropModal && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-[#12131e] border border-rose-500/40 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
-              <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto text-xl font-bold">
-                !
-              </div>
-              <h3 className="text-lg font-bold text-white">Confirm Drop?</h3>
-              <p className="text-xs text-slate-300">
-                {game?.openDeck.length && game.openDeck.length > 1
-                  ? 'Middle Drop: 40 points penalty will be applied.'
-                  : 'First Drop: 20 points penalty will be applied.'}
-              </p>
-              <div className="flex items-center justify-center gap-3 pt-2">
-                <button
-                  onClick={() => setShowDropModal(false)}
-                  className="py-2 px-4 rounded-xl bg-white/10 text-xs font-semibold text-slate-300"
-                >
-                  Keep Playing
-                </button>
-                <button
-                  onClick={handleManualDrop}
-                  className="py-2 px-5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold"
-                >
-                  Yes, Drop Hand
-                </button>
+        {showDropModal && (() => {
+          const entryFee = game?.entryFee || 20;
+          const dropInfo = calculateDropPenalty(
+            entryFee,
+            game?.pointValue || (entryFee / 80),
+            myPlayer?.turnsCount || 0,
+            isMyTurn && Boolean(hasDrawn)
+          );
+          const refundAmount = Math.max(0, entryFee - dropInfo.penaltyRupees);
+
+          return (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+              <div className="bg-[#12131e] border border-rose-500/50 rounded-3xl p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+                <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto text-xl font-bold">
+                  ⚠️
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white">
+                    {dropInfo.isFirstDrop ? 'Confirm First Drop?' : 'Confirm Middle Drop?'}
+                  </h3>
+                  <span className="inline-block mt-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                    {dropInfo.isFirstDrop ? 'First Drop: 20 Points (25%)' : 'Middle Drop: 40 Points (50%)'}
+                  </span>
+                </div>
+
+                <div className="bg-black/60 border border-white/10 rounded-2xl p-3.5 space-y-2 text-xs text-left">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Table Entry Buy-in:</span>
+                    <span className="font-mono font-bold text-white">₹{entryFee}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-rose-400 font-bold">
+                    <span>Drop Penalty ({dropInfo.isFirstDrop ? '25%' : '50%'}):</span>
+                    <span className="font-mono text-sm font-black">-₹{dropInfo.penaltyRupees}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1.5 border-t border-white/10">
+                    <span>Refunded to Wallet:</span>
+                    <span className="font-mono text-sm font-black">+₹{refundAmount}</span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {dropInfo.isFirstDrop
+                    ? `First drop penalty ₹${dropInfo.penaltyRupees} will be deducted and remaining ₹${refundAmount} will be returned to your wallet.`
+                    : `Middle drop penalty ₹${dropInfo.penaltyRupees} will be deducted and remaining ₹${refundAmount} will be returned to your wallet.`}
+                </p>
+
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <button
+                    onClick={() => setShowDropModal(false)}
+                    className="py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-slate-300 transition-colors"
+                  >
+                    Keep Playing
+                  </button>
+                  <button
+                    onClick={handleManualDrop}
+                    disabled={actionLoading}
+                    className="py-2.5 px-5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 text-white text-xs font-black uppercase shadow-lg shadow-rose-600/30 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Dropping...' : `Confirm Drop (-₹${dropInfo.penaltyRupees})`}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* 
           MATCH RESULT OVERLAY 
@@ -1596,10 +1720,16 @@ export default function GameRoomPage() {
                 {players.map((p) => {
                   const isWinner = p.uid === game.winnerUid;
                   const pts = game.resultData?.scores[p.uid] ?? p.score ?? 0;
-                  const loserMoneyLoss = Math.min(
-                    game.entryFee || 80 * (game.pointValue || 1),
-                    Math.max(1, Math.round(pts * (game.pointValue || 1) * 100) / 100)
-                  );
+                  const entryFee = game.entryFee || 20;
+                  const loserMoneyLoss = pts === 20
+                    ? Math.round(entryFee * 0.25 * 100) / 100
+                    : pts === 40
+                    ? Math.round(entryFee * 0.50 * 100) / 100
+                    : Math.min(
+                        entryFee,
+                        Math.max(1, Math.round(pts * (game.pointValue || (entryFee / 80)) * 100) / 100)
+                      );
+                  const loserRefund = Math.max(0, (p.entryPaid || entryFee) - loserMoneyLoss);
 
                   return (
                     <div key={p.uid} className="py-2.5 flex items-center justify-between">
@@ -1620,16 +1750,28 @@ export default function GameRoomPage() {
 
                       <div className="text-right">
                         <p className={`font-black text-sm ${isWinner ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {isWinner ? `+${pts} Pts (Won)` : `-${pts} Pts (${p.status === 'dropped' ? 'Drop' : 'Loss'})`}
+                          {isWinner ? `+${pts} Pts (Won)` : `-${pts} Pts (${p.status === 'dropped' ? (pts === 20 ? 'First Drop' : 'Middle Drop') : 'Loss'})`}
                         </p>
                         {isWinner && game.resultData?.payouts[p.uid] ? (
-                          <span className="text-[11px] text-amber-300 font-bold block">
-                            +₹{game.resultData.payouts[p.uid].toLocaleString('en-IN')} Credited to Winnings!
-                          </span>
+                          <div>
+                            <span className="text-[11px] text-amber-300 font-bold block">
+                              +₹{game.resultData.payouts[p.uid].toLocaleString('en-IN')} Net Winnings
+                            </span>
+                            <span className="text-[10px] text-emerald-400 font-semibold block">
+                              +₹{(game.resultData.winnerBuyInRefund || entryFee).toLocaleString('en-IN')} Buy-in Refunded
+                            </span>
+                          </div>
                         ) : (
-                          <span className="text-[11px] text-rose-400 font-bold block">
-                            -₹{loserMoneyLoss.toLocaleString('en-IN')} Deducted from Wallet
-                          </span>
+                          <div>
+                            <span className="text-[11px] text-rose-400 font-bold block">
+                              -₹{loserMoneyLoss.toLocaleString('en-IN')} Penalty
+                            </span>
+                            {loserRefund > 0 && (
+                              <span className="text-[10px] text-emerald-400 font-semibold block">
+                                +₹{loserRefund.toLocaleString('en-IN')} Refunded from Buy-in
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1638,21 +1780,28 @@ export default function GameRoomPage() {
               </div>
 
               {/* Loser wallet deduction confirmation banner */}
-              {/* "मैंने देखा कि हारने के बाद गेम जो है, मनी डिडक्ट नहीं होता है" */}
-              {game.winnerUid !== user?.uid && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-3 text-xs text-rose-300 text-left flex items-center gap-2.5">
-                  <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
-                  <div>
-                    <p className="font-bold text-white">Loss Settled & Deducted</p>
-                    <p className="text-[11px] text-slate-300">
-                      ₹{Math.min(
-                        game.entryFee || 80 * (game.pointValue || 1),
-                        Math.max(1, Math.round(((game.resultData?.scores[user?.uid || ''] ?? myPlayer?.score ?? 20)) * (game.pointValue || 1) * 100) / 100)
-                      )} deducted from your wallet for this match.
-                    </p>
+              {game.winnerUid !== user?.uid && (() => {
+                const myPts = game.resultData?.scores[user?.uid || ''] ?? myPlayer?.score ?? 20;
+                const entryFee = game.entryFee || 20;
+                const myLoss = myPts === 20
+                  ? Math.round(entryFee * 0.25 * 100) / 100
+                  : myPts === 40
+                  ? Math.round(entryFee * 0.50 * 100) / 100
+                  : Math.min(entryFee, Math.max(1, Math.round(myPts * (game.pointValue || (entryFee / 80)) * 100) / 100));
+                const myRefund = Math.max(0, (myPlayer?.entryPaid || entryFee) - myLoss);
+
+                return (
+                  <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-3 text-xs text-rose-300 text-left flex items-center gap-2.5">
+                    <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                    <div>
+                      <p className="font-bold text-white">Loss Settled</p>
+                      <p className="text-[11px] text-slate-300">
+                        ₹{myLoss} penalty deducted for {myPts} points. Remaining ₹{myRefund} from your ₹{entryFee} buy-in has been refunded to your wallet.
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Winning Amount & 14% Platform Fee Breakdown */}
               {game.resultData && (game.resultData.grossWin || 0) > 0 && (
@@ -1672,19 +1821,25 @@ export default function GameRoomPage() {
                     </div>
                   )}
                   <div className="flex items-center justify-between font-bold text-slate-300">
-                    <span>Total Winning Pot:</span>
+                    <span>Total Pot Won from Opponents:</span>
                     <span className="font-mono text-white">₹{game.resultData.grossWin?.toLocaleString('en-IN')}</span>
                   </div>
                   <div className="flex items-center justify-between text-rose-300">
                     <span>Platform Fee (14% automatic cut):</span>
                     <span className="font-mono font-bold text-rose-400">-₹{game.resultData.platformFee?.toLocaleString('en-IN')}</span>
                   </div>
-                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1.5 border-t border-white/10">
-                    <span className="text-sm">Net Winning Credited (100% Withdrawable):</span>
-                    <span className="font-mono text-base font-black">₹{game.resultData.playerNetShare?.toLocaleString('en-IN')}</span>
+                  <div className="flex items-center justify-between text-cyan-300 font-bold pt-1 border-t border-white/5">
+                    <span>Entry Buy-in Returned (100% Refunded):</span>
+                    <span className="font-mono text-base font-black text-cyan-300">+₹{(game.resultData.winnerBuyInRefund || game.entryFee)?.toLocaleString('en-IN')}</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 pt-1">
-                    💡 14% प्लेटफॉर्म फीस कटने के बाद राशि आपके Winnings वॉलेट में जमा हो चुकी है। विथड्रॉल के समय कोई फीस नहीं कटेगी (0% कटौती)!
+                  <div className="flex items-center justify-between text-emerald-400 font-bold pt-1.5 border-t border-white/10">
+                    <span className="text-sm">Total Added to Your Balance:</span>
+                    <span className="font-mono text-base font-black text-emerald-300">
+                      +₹{((game.resultData.playerNetShare || 0) + (game.resultData.winnerBuyInRefund || game.entryFee || 0))?.toLocaleString('en-IN')} (Net Profit: +₹{game.resultData.playerNetShare?.toLocaleString('en-IN')})
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-emerald-300/90 pt-1">
+                    💡 आपकी एंट्री फीस (₹{game.resultData.winnerBuyInRefund || game.entryFee}) पूरी वापस कर दी गई है और शुद्ध जीत (₹{game.resultData.playerNetShare}) Winnings वॉलेट में जमा हो चुकी है!
                   </p>
                 </div>
               )}

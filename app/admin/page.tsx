@@ -52,6 +52,7 @@ export default function AdminPanelPage() {
   const [searchedWallet, setSearchedWallet] = useState<{ uid: string; playerId: string; wallet: UserWallet } | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState('100');
+  const [adjustType, setAdjustType] = useState<'deposit' | 'win'>('deposit');
   const isAdmin =
     user?.email === 'supportalkabrain@gmail.com' ||
     user?.email === '9118431155@rummyadda.app' ||

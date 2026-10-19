@@ -154,6 +154,9 @@ export interface GamePlayerState {
   cards?: Card[]; // Only visible to the local player / authenticated player!
   joinedAt: string;
   dropPenalty?: number;
+  dropPenaltyRupees?: number;
+  isFirstDrop?: boolean;
+  turnsCount?: number;
   entryPaid?: number;
   deductionBreakdown?: {
     depositDeduct: number;
@@ -194,6 +197,7 @@ export interface GameState {
     feePercent?: number; // 14%
     playerNetShare?: number; // Net winnings credited to winner wallet
     adminShare?: number;
+    winnerBuyInRefund?: number;
     winnerSets?: number;
     winnerSetPoints?: number;
     settlementStatus?: string;
