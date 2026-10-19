@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, isUserAdmin, ensureAdminPrivileges } from '@/lib/auth-context';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
@@ -53,12 +53,13 @@ export default function AdminPanelPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [adjustAmount, setAdjustAmount] = useState('100');
   const [adjustType, setAdjustType] = useState<'deposit' | 'win'>('deposit');
-  const isAdmin =
-    user?.email === 'supportalkabrain@gmail.com' ||
-    user?.email === '9118431155@rummyadda.app' ||
-    user?.email === '9118431155@phone.rummyadda.in' ||
-    profile?.phone === '9118431155' ||
-    profile?.role === 'admin';
+  const isAdmin = isUserAdmin(user, profile);
+
+  useEffect(() => {
+    if (user && isAdmin) {
+      ensureAdminPrivileges(user);
+    }
+  }, [user, isAdmin]);
 
   // Real-time listener for withdrawals
   useEffect(() => {
@@ -102,6 +103,7 @@ export default function AdminPanelPage() {
     setActionLoading(w.withdrawalId);
     setFeedbackMsg(null);
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       await updateDoc(doc(db, 'withdrawals', w.withdrawalId), {
         status: 'paid',
@@ -116,7 +118,11 @@ export default function AdminPanelPage() {
       });
     } catch (err: unknown) {
       console.error(err);
-      setFeedbackMsg({ text: 'Failed to approve withdrawal.', type: 'error' });
+      let msg = 'Failed to approve withdrawal.';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        msg = 'Missing or insufficient permissions: Firebase Console me Firestore Rules update karein.';
+      }
+      setFeedbackMsg({ text: msg, type: 'error' });
     } finally {
       setActionLoading(null);
     }
@@ -127,6 +133,7 @@ export default function AdminPanelPage() {
     setActionLoading(w.withdrawalId);
     setFeedbackMsg(null);
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const walletRef = doc(db, 'wallets', w.uid);
       const withdrawalRef = doc(db, 'withdrawals', w.withdrawalId);
@@ -174,7 +181,10 @@ export default function AdminPanelPage() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'Failed to reject and refund withdrawal.';
+      let msg = err instanceof Error ? err.message : 'Failed to reject and refund withdrawal.';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        msg = 'Missing or insufficient permissions: Firebase Console me Firestore Rules update karein.';
+      }
       setFeedbackMsg({ text: msg, type: 'error' });
     } finally {
       setActionLoading(null);
@@ -186,6 +196,7 @@ export default function AdminPanelPage() {
     setActionLoading(d.depositId);
     setFeedbackMsg(null);
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const walletRef = doc(db, 'wallets', d.uid);
       const depositRef = doc(db, 'deposits', d.depositId);
@@ -234,7 +245,10 @@ export default function AdminPanelPage() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'Failed to approve deposit.';
+      let msg = err instanceof Error ? err.message : 'Failed to approve deposit.';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        msg = 'Missing or insufficient permissions: Firebase Console me Firestore Rules update karein.';
+      }
       setFeedbackMsg({ text: msg, type: 'error' });
     } finally {
       setActionLoading(null);
@@ -246,6 +260,7 @@ export default function AdminPanelPage() {
     setActionLoading(d.depositId);
     setFeedbackMsg(null);
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       await updateDoc(doc(db, 'deposits', d.depositId), {
         status: 'rejected',
@@ -259,7 +274,11 @@ export default function AdminPanelPage() {
       });
     } catch (err: unknown) {
       console.error(err);
-      setFeedbackMsg({ text: 'Failed to reject deposit.', type: 'error' });
+      let msg = 'Failed to reject deposit.';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        msg = 'Missing or insufficient permissions: Firebase Console me Firestore Rules update karein.';
+      }
+      setFeedbackMsg({ text: msg, type: 'error' });
     } finally {
       setActionLoading(null);
     }
@@ -330,6 +349,7 @@ export default function AdminPanelPage() {
 
     setActionLoading('adjusting');
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const walletRef = doc(db, 'wallets', searchedWallet.uid);
       const txRef = doc(collection(db, 'transactions'));
@@ -380,7 +400,11 @@ export default function AdminPanelPage() {
       });
     } catch (err) {
       console.error(err);
-      setFeedbackMsg({ text: 'Adjustment failed.', type: 'error' });
+      let msg = 'Adjustment failed.';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        msg = 'Missing or insufficient permissions: Firebase Console me Firestore Rules update karein.';
+      }
+      setFeedbackMsg({ text: msg, type: 'error' });
     } finally {
       setActionLoading(null);
     }

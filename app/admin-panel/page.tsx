@@ -33,6 +33,7 @@ import {
   FileText,
   BadgeCheck,
   Send,
+  Copy,
 } from 'lucide-react';
 import {
   collection,
@@ -56,18 +57,23 @@ import {
   WalletTransaction,
   getPlayableBalance,
 } from '@/lib/types';
-import { sanitizePhone } from '@/lib/auth-context';
+import { sanitizePhone, isUserAdmin, ensureAdminPrivileges } from '@/lib/auth-context';
+import { FIRESTORE_RULES_TEXT } from '@/lib/firestore-rules-text';
 
 export default function AdminWhatsAppOperationsPanel() {
   const { user, profile } = useAuth();
 
   // Admin access check
-  const isAdmin =
-    user?.email === 'supportalkabrain@gmail.com' ||
-    user?.email === '9118431155@rummyadda.app' ||
-    user?.email === '9118431155@phone.rummyadda.in' ||
-    profile?.phone === '9118431155' ||
-    profile?.role === 'admin';
+  const isAdmin = isUserAdmin(user, profile);
+
+  useEffect(() => {
+    if (user && isAdmin) {
+      ensureAdminPrivileges(user);
+    }
+  }, [user, isAdmin]);
+
+  const [showRulesGuide, setShowRulesGuide] = useState(false);
+  const [rulesCopied, setRulesCopied] = useState(false);
 
   // Admin login fallback state if not signed in as admin
   const [adminId, setAdminId] = useState('');
@@ -256,6 +262,10 @@ export default function AdminWhatsAppOperationsPanel() {
       if (!loggedIn) {
         throw new Error('Invalid Admin ID or Password. Please check your credentials.');
       }
+
+      if (auth.currentUser) {
+        await ensureAdminPrivileges(auth.currentUser);
+      }
     } catch (err: unknown) {
       console.error(err);
       let msg = 'लॉगिन विफल रहा। कृपया Admin ID और Password की जांच करें।';
@@ -395,6 +405,7 @@ export default function AdminWhatsAppOperationsPanel() {
     setActionFeedback(null);
 
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const walletRef = doc(db, 'wallets', dep.uid);
       const depositRef = doc(db, 'deposits', dep.depositId);
@@ -403,15 +414,25 @@ export default function AdminWhatsAppOperationsPanel() {
 
       await runTransaction(db, async (tx) => {
         const wSnap = await tx.get(walletRef);
-        if (!wSnap.exists()) throw new Error('Player wallet not found');
-        const wData = wSnap.data() as UserWallet;
+        let newDepositBal = dep.requestedAmount;
 
-        const newDepositBal = (wData.depositBalance || 0) + dep.requestedAmount;
-
-        tx.update(walletRef, {
-          depositBalance: newDepositBal,
-          updatedAt: now,
-        });
+        if (wSnap.exists()) {
+          const wData = wSnap.data() as UserWallet;
+          newDepositBal = (wData.depositBalance || 0) + dep.requestedAmount;
+          tx.update(walletRef, {
+            depositBalance: newDepositBal,
+            updatedAt: now,
+          });
+        } else {
+          tx.set(walletRef, {
+            uid: dep.uid,
+            depositBalance: dep.requestedAmount,
+            winBalance: 0,
+            bonusBalance: 20,
+            rewardPoints: 0,
+            updatedAt: now,
+          });
+        }
 
         tx.update(depositRef, {
           status: 'approved',
@@ -440,7 +461,11 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'डिपॉजिट अप्रूव करने में त्रुटि आई।';
+      let msg = err instanceof Error ? err.message : 'डिपॉजिट अप्रूव करने में त्रुटि आई।';
+      if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
       setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
@@ -455,6 +480,7 @@ export default function AdminWhatsAppOperationsPanel() {
     setActionFeedback(null);
 
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       await updateDoc(doc(db, 'deposits', dep.depositId), {
         status: 'rejected',
@@ -469,21 +495,24 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      setActionFeedback({ text: 'डिपॉजिट अस्वीकृत करने में विफल।', type: 'error' });
+      let msg = 'डिपॉजिट अस्वीकृत करने में विफल।';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
+      setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
     }
   };
 
-  // ========================
-  // WITHDRAWAL APPROVE & DENY
-  // ========================
   const handleApproveWithdrawal = async (wd: WithdrawalRequest) => {
     if (!targetUser) return;
     setActionLoadingId(wd.withdrawalId);
     setActionFeedback(null);
 
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const wdRef = doc(db, 'withdrawals', wd.withdrawalId);
 
@@ -493,15 +522,19 @@ export default function AdminWhatsAppOperationsPanel() {
       });
 
       // Update linked transaction if exists
-      const qTx = query(
-        collection(db, 'transactions'),
-        where('referenceId', '==', wd.withdrawalId)
-      );
-      const txSnaps = await getDocs(qTx);
-      for (const tDoc of txSnaps.docs) {
-        await updateDoc(doc(db, 'transactions', tDoc.id), {
-          status: 'completed',
-        });
+      try {
+        const qTx = query(
+          collection(db, 'transactions'),
+          where('referenceId', '==', wd.withdrawalId)
+        );
+        const txSnaps = await getDocs(qTx);
+        for (const tDoc of txSnaps.docs) {
+          await updateDoc(doc(db, 'transactions', tDoc.id), {
+            status: 'completed',
+          });
+        }
+      } catch (txSyncErr) {
+        console.warn('Linked transaction update notice:', txSyncErr);
       }
 
       setActionFeedback({
@@ -510,7 +543,12 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      setActionFeedback({ text: 'विड्रॉल अप्रूव करने में त्रुटि आई।', type: 'error' });
+      let msg = 'विड्रॉल अप्रूव करने में त्रुटि आई।';
+      if (err instanceof Error && (err.message.includes('permission-denied') || err.message.includes('insufficient permissions'))) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
+      setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
     }
@@ -524,6 +562,7 @@ export default function AdminWhatsAppOperationsPanel() {
     setActionFeedback(null);
 
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const walletRef = doc(db, 'wallets', wd.uid);
       const wdRef = doc(db, 'withdrawals', wd.withdrawalId);
@@ -532,16 +571,25 @@ export default function AdminWhatsAppOperationsPanel() {
 
       await runTransaction(db, async (tx) => {
         const wSnap = await tx.get(walletRef);
-        if (!wSnap.exists()) throw new Error('Player wallet not found');
-        const wData = wSnap.data() as UserWallet;
+        let newWinBalance = wd.amount;
 
-        // Refund the amount back to user's winBalance
-        const newWinBalance = (wData.winBalance || 0) + wd.amount;
-
-        tx.update(walletRef, {
-          winBalance: newWinBalance,
-          updatedAt: now,
-        });
+        if (wSnap.exists()) {
+          const wData = wSnap.data() as UserWallet;
+          newWinBalance = (wData.winBalance || 0) + wd.amount;
+          tx.update(walletRef, {
+            winBalance: newWinBalance,
+            updatedAt: now,
+          });
+        } else {
+          tx.set(walletRef, {
+            uid: wd.uid,
+            depositBalance: 0,
+            winBalance: wd.amount,
+            bonusBalance: 20,
+            rewardPoints: 0,
+            updatedAt: now,
+          });
+        }
 
         tx.update(wdRef, {
           status: 'rejected',
@@ -570,7 +618,11 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'विड्रॉल अस्वीकृत व रिफंड करने में त्रुटि।';
+      let msg = err instanceof Error ? err.message : 'विड्रॉल अस्वीकृत व रिफंड करने में त्रुटि।';
+      if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
       setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
@@ -591,6 +643,7 @@ export default function AdminWhatsAppOperationsPanel() {
 
     setActionLoadingId('manual-deposit');
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const depositId = `dep_manual_${Date.now()}`;
       const walletRef = doc(db, 'wallets', targetUser.uid);
@@ -600,15 +653,25 @@ export default function AdminWhatsAppOperationsPanel() {
 
       await runTransaction(db, async (tx) => {
         const wSnap = await tx.get(walletRef);
-        if (!wSnap.exists()) throw new Error('Player wallet not found');
-        const wData = wSnap.data() as UserWallet;
+        let newDepositBal = numAmount;
 
-        const newDepositBal = (wData.depositBalance || 0) + numAmount;
-
-        tx.update(walletRef, {
-          depositBalance: newDepositBal,
-          updatedAt: now,
-        });
+        if (wSnap.exists()) {
+          const wData = wSnap.data() as UserWallet;
+          newDepositBal = (wData.depositBalance || 0) + numAmount;
+          tx.update(walletRef, {
+            depositBalance: newDepositBal,
+            updatedAt: now,
+          });
+        } else {
+          tx.set(walletRef, {
+            uid: targetUser.uid,
+            depositBalance: numAmount,
+            winBalance: 0,
+            bonusBalance: 20,
+            rewardPoints: 0,
+            updatedAt: now,
+          });
+        }
 
         const newDeposit: DepositRequest = {
           depositId,
@@ -645,7 +708,11 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'डिपॉजिट करने में त्रुटि आई।';
+      let msg = err instanceof Error ? err.message : 'डिपॉजिट करने में त्रुटि आई।';
+      if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
       setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
@@ -681,6 +748,7 @@ export default function AdminWhatsAppOperationsPanel() {
 
     setActionLoadingId('manual-withdrawal');
     try {
+      if (user) await ensureAdminPrivileges(user);
       const now = new Date().toISOString();
       const wdId = `wd_manual_${Date.now()}`;
       const walletRef = doc(db, 'wallets', targetUser.uid);
@@ -745,7 +813,11 @@ export default function AdminWhatsAppOperationsPanel() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : 'विड्रॉल प्रोसेस करने में समस्या आई।';
+      let msg = err instanceof Error ? err.message : 'विड्रॉल प्रोसेस करने में समस्या आई।';
+      if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
+        setShowRulesGuide(true);
+        msg = 'Missing or insufficient permissions: Firebase Console में Firestore Rules को अपडेट करने की आवश्यकता है।';
+      }
       setActionFeedback({ text: msg, type: 'error' });
     } finally {
       setActionLoadingId(null);
@@ -868,6 +940,14 @@ export default function AdminWhatsAppOperationsPanel() {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowRulesGuide(true)}
+                className="py-2.5 px-4 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                <span>Firebase Rules & Permissions</span>
+              </button>
               <Link
                 href="/admin"
                 className="py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-300 flex items-center gap-1.5 transition-colors"
@@ -1841,6 +1921,121 @@ export default function AdminWhatsAppOperationsPanel() {
                     className="py-2 px-5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl shadow-lg shadow-rose-600/30 cursor-pointer"
                   >
                     पुष्टि करें (Confirm Deny)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* MODAL 4: FIREBASE RULES & PERMISSIONS GUIDE */}
+          {/* ======================================================== */}
+          {showRulesGuide && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-[#12131e] border border-amber-500/40 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                  <div className="flex items-center gap-3 text-amber-400">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                      <ShieldAlert className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-white">
+                        Firebase Permissions & Rules Guide
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Missing or insufficient permissions को ठीक करने का उपाय
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowRulesGuide(false)}
+                    className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4 text-xs text-slate-300 pr-1">
+                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1">
+                    <p className="font-bold">⚠️ यह एरर क्यों आता है?</p>
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      अगर Firebase Console के Firestore Database में Security Rules अपडेट नहीं हैं, तो Firestore डिपॉजिट व विड्रॉल के राइट्स ब्लॉक कर देता है।
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="font-bold text-white text-xs">स्टेप 1: अपना एडमिन स्टेटस सिंक करें</p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (user) {
+                          await ensureAdminPrivileges(user);
+                          setActionFeedback({
+                            text: 'एडमिन अधिकार डेटाबेस में सफलतापूर्वक सिंक कर दिए गए हैं!',
+                            type: 'success',
+                          });
+                        }
+                      }}
+                      className="py-2.5 px-4 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 text-black font-black text-xs rounded-xl flex items-center gap-2 cursor-pointer shadow"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>⚡ Sync & Fix Admin Rights Now</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="font-bold text-white text-xs">स्टेप 2: Firebase Console में Rules पब्लिश करें</p>
+                    <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-400 leading-relaxed">
+                      <li>
+                        <a
+                          href="https://console.firebase.google.com"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-amber-400 underline font-semibold"
+                        >
+                          Firebase Console (console.firebase.google.com)
+                        </a>{' '}
+                        खोलें।
+                      </li>
+                      <li>
+                        प्रोजेक्ट <span className="font-mono text-white bg-black/40 px-1 py-0.5 rounded">mini-messanger-bcf35</span> पर जाएं।
+                      </li>
+                      <li>
+                        बाएं मेनू से <span className="font-semibold text-white">Firestore Database</span> खोलें और ऊपर <span className="font-semibold text-white">Rules</span> टैब पर क्लिक करें।
+                      </li>
+                      <li>नीचे दिए गए रूल्स को कॉपी करके वहां पेस्ट करें और <b>Publish</b> बटन दबाएं।</li>
+                    </ol>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-300 text-[11px]">Updated firestore.rules:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(FIRESTORE_RULES_TEXT);
+                          setRulesCopied(true);
+                          setTimeout(() => setRulesCopied(false), 2500);
+                        }}
+                        className="py-1 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold text-amber-400 flex items-center gap-1 cursor-pointer"
+                      >
+                        {rulesCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{rulesCopied ? 'Copied!' : 'Copy Rules'}</span>
+                      </button>
+                    </div>
+                    <pre className="p-3 bg-[#0a0b12] border border-white/10 rounded-xl text-[10px] font-mono text-slate-300 max-h-48 overflow-y-auto whitespace-pre">
+                      {FIRESTORE_RULES_TEXT}
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-white/10 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowRulesGuide(false)}
+                    className="py-2 px-5 bg-white/10 hover:bg-white/15 text-white text-xs font-bold rounded-xl cursor-pointer"
+                  >
+                    समझ गया (Close)
                   </button>
                 </div>
               </div>

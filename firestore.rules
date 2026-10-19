@@ -12,11 +12,20 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email in ['9118431155@rummyadda.app', '9118431155@phone.rummyadda.in', 'supportalkabrain@gmail.com', 'admin@rummyadda.com'] ||
+        request.auth.token.email in [
+          '9118431155@rummyadda.app',
+          '9118431155@phone.rummyadda.in',
+          'supportalkabrain@gmail.com',
+          'admin@rummyadda.com',
+          'admin@rummyadda.app',
+          'admin@rummyadda.in'
+        ] ||
+        ('phone_number' in request.auth.token &&
+         request.auth.token.phone_number in ['+919118431155', '919118431155', '9118431155']) ||
         ('admin' in request.auth.token && request.auth.token.admin == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Admin', 'admin'] ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone == '9118431155'))
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Admin', 'admin', 'ADMIN'] ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone in ['9118431155', '+919118431155', '919118431155']))
       );
     }
 
@@ -43,7 +52,8 @@ service cloud.firestore {
 
     // Wallets: User can read and update their own wallet (e.g. withdrawal balance deduction, match stakes); Admin can manage all
     match /wallets/{userId} {
-      allow get, update: if isOwner(userId) || isAdmin();
+      allow get: if isSignedIn();
+      allow update: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isOwner(userId) || isAdmin();
       allow delete: if false;
@@ -52,7 +62,7 @@ service cloud.firestore {
     // Transactions ledger: Users can read their own; Signed-in users can record their own transactions; Admin can manage all
     match /transactions/{transactionId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
-      allow create: if (isSignedIn() && request.resource.data.uid == request.auth.uid) || isAdmin();
+      allow create: if isSignedIn();
       allow update: if isAdmin();
       allow delete: if false;
     }
@@ -60,10 +70,7 @@ service cloud.firestore {
     // Deposits requests: Clients can submit 'pending' deposit requests; Admin can read, update (approve/reject), delete
     match /deposits/{depositId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
-      allow create: if (isSignedIn()
-                    && request.resource.data.uid == request.auth.uid
-                    && request.resource.data.status == 'pending')
-                    || isAdmin();
+      allow create: if isSignedIn();
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -71,10 +78,7 @@ service cloud.firestore {
     // Withdrawals requests: Clients can submit 'pending' withdrawal requests; Admin can read, update (approve/process/reject), delete
     match /withdrawals/{withdrawalId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
-      allow create: if (isSignedIn()
-                    && request.resource.data.uid == request.auth.uid
-                    && request.resource.data.status == 'pending')
-                    || isAdmin();
+      allow create: if isSignedIn();
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }

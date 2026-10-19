@@ -65,6 +65,58 @@ function generatePlayerId(): string {
   return result;
 }
 
+export const ADMIN_EMAILS = [
+  '9118431155@rummyadda.app',
+  '9118431155@phone.rummyadda.in',
+  'supportalkabrain@gmail.com',
+  'admin@rummyadda.com',
+  'admin@rummyadda.app',
+  'admin@rummyadda.in',
+];
+
+export function isUserAdmin(
+  currentUser: { email?: string | null; phoneNumber?: string | null } | null,
+  profile?: { phone?: string | null; role?: string | null; email?: string | null } | null
+): boolean {
+  if (!currentUser && !profile) return false;
+  const email = (currentUser?.email || profile?.email || '').trim().toLowerCase();
+  const phone = sanitizePhone(currentUser?.phoneNumber || profile?.phone || '');
+
+  if (ADMIN_EMAILS.includes(email)) return true;
+  if (phone === '9118431155') return true;
+  if (profile?.role === 'admin' || profile?.role === 'Admin') return true;
+  return false;
+}
+
+export async function ensureAdminPrivileges(targetAuthUser: User | null): Promise<boolean> {
+  if (!targetAuthUser) return false;
+  try {
+    const userRef = doc(db, 'users', targetAuthUser.uid);
+    const snap = await getDoc(userRef);
+    const data = snap.exists() ? (snap.data() as UserProfile) : null;
+    const qualifies = isUserAdmin(targetAuthUser, data);
+
+    if (qualifies) {
+      await setDoc(
+        userRef,
+        {
+          uid: targetAuthUser.uid,
+          role: 'admin',
+          phone: '9118431155',
+          email: targetAuthUser.email || '9118431155@rummyadda.app',
+          displayName: data?.displayName || 'Admin (Imran)',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return true;
+    }
+  } catch (err) {
+    console.warn('ensureAdminPrivileges notice:', err);
+  }
+  return false;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -102,17 +154,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const walletRef = doc(db, 'wallets', currentUser.uid);
 
         const userSnap = await getDoc(userRef);
+        const isAdminUser = isUserAdmin(currentUser);
 
         if (!userSnap.exists()) {
           const newPlayerId = generatePlayerId();
-          const isAdminUser = currentUser.email === 'supportalkabrain@gmail.com';
           const newProfile: UserProfile = {
             uid: currentUser.uid,
             playerId: newPlayerId,
             referralCode: getCodeFromPlayerId(newPlayerId),
-            displayName: currentUser.displayName || (isAdminUser ? 'Admin' : 'Royal Player'),
+            displayName: currentUser.displayName || (isAdminUser ? 'Admin (Imran)' : 'Royal Player'),
             email: currentUser.email || '',
-            phone: currentUser.phoneNumber || '',
+            phone: isAdminUser ? '9118431155' : (currentUser.phoneNumber || ''),
             photoURL: currentUser.photoURL || '',
             role: isAdminUser ? 'admin' : 'player',
             accountStatus: 'active',
@@ -121,6 +173,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             createdAt: new Date().toISOString(),
           };
           await setDoc(userRef, newProfile);
+        } else {
+          // If profile exists, check if user is an admin but lacks admin role or phone in Firestore
+          const existingData = userSnap.data() as UserProfile;
+          if (
+            (isAdminUser || isUserAdmin(currentUser, existingData)) &&
+            (existingData.role !== 'admin' || existingData.phone !== '9118431155')
+          ) {
+            await setDoc(
+              userRef,
+              {
+                role: 'admin',
+                phone: '9118431155',
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+          }
         }
 
         const walletSnap = await getDoc(walletRef);
@@ -188,13 +257,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as UserProfile;
-          if (
-            user.email === 'supportalkabrain@gmail.com' ||
-            user.email === '9118431155@rummyadda.app' ||
-            user.email === '9118431155@phone.rummyadda.in' ||
-            data.phone === '9118431155'
-          ) {
+          if (isUserAdmin(user, data)) {
             data.role = 'admin';
+            data.phone = '9118431155';
           }
           setProfile(data);
         }
@@ -266,14 +331,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const walletRef = doc(db, 'wallets', cred.user.uid);
       const now = new Date().toISOString();
 
+      const isNewAdmin = cleanPhone === '9118431155';
       const newProfile: UserProfile = {
         uid: cred.user.uid,
         playerId: newPlayerId,
         referralCode: myReferralCode,
-        displayName: displayName,
+        displayName: isNewAdmin ? 'Admin (Imran)' : displayName,
         email: authEmail,
         phone: cleanPhone,
-        role: 'player',
+        role: isNewAdmin ? 'admin' : 'player',
         accountStatus: 'active',
         totalReferrals: 0,
         referralEarnings: 0,
