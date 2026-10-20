@@ -157,6 +157,7 @@ export interface GamePlayerState {
   dropPenaltyRupees?: number;
   isFirstDrop?: boolean;
   turnsCount?: number;
+  missedTurns?: number;
   entryPaid?: number;
   deductionBreakdown?: {
     depositDeduct: number;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
@@ -34,6 +34,7 @@ import {
   getGroupMeldStatus,
   GroupMeldStatus,
   calculateLossPoints,
+  calculateLiveHandScore,
   findBestMelds,
   validateDeclaration,
 } from '@/lib/rummy-engine';
@@ -194,7 +195,7 @@ export default function GameRoomPage() {
         } finally {
           isBotExecutingRef.current = false;
         }
-      }, 120);
+      }, 900);
       return () => {
         clearTimeout(timer);
         isBotExecutingRef.current = false;
@@ -202,13 +203,13 @@ export default function GameRoomPage() {
     }
   }, [game?.turnUid, game?.status, game?.gameId, players]);
 
-  // 1. Send player heartbeat every 10 seconds to keep room alive
+  // 1. Send player heartbeat every 30 seconds to keep room alive (throttled for performance)
   useEffect(() => {
     if (!gameId || !user) return;
     sendPlayerHeartbeat(gameId, user.uid);
     const interval = setInterval(() => {
       sendPlayerHeartbeat(gameId, user.uid);
-    }, 10000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [gameId, user]);
 
@@ -275,14 +276,22 @@ export default function GameRoomPage() {
     return () => unsub();
   }, [gameId, user]);
 
-  // 4. 15-second countdown timer handler
-  useEffect(() => {
-    if (!game || !myPlayer) return;
+  // 4. 15-second countdown timer handler — uses stable deps
+  const countdownGameId = game?.gameId;
+  const countdownStatus = game?.status;
+  const countdownPhase = game?.phase;
+  const countdownEndsAtVal = game?.countdownEndsAt;
+  const hasMyPlayer = !!myPlayer;
 
-    if (game.status === 'COUNTDOWN' && game.phase === 'COUNTDOWN') {
+  useEffect(() => {
+    if (!countdownGameId || !hasMyPlayer) return;
+
+    if (countdownStatus === 'COUNTDOWN' && countdownPhase === 'COUNTDOWN') {
+      const startMatchCalled = { current: false };
+
       const calculateTimeLeft = () => {
-        if (game.countdownEndsAt) {
-          const endsAt = new Date(game.countdownEndsAt).getTime();
+        if (countdownEndsAtVal) {
+          const endsAt = new Date(countdownEndsAtVal).getTime();
           const now = Date.now();
           return Math.max(0, Math.ceil((endsAt - now) / 1000));
         }
@@ -293,10 +302,11 @@ export default function GameRoomPage() {
         const diff = calculateTimeLeft();
         setCountdownLeft(diff);
 
-        if (diff <= 0) {
+        if (diff <= 0 && !startMatchCalled.current) {
+          startMatchCalled.current = true;
           clearInterval(interval);
           try {
-            await startMatch(game.gameId);
+            await startMatch(countdownGameId);
           } catch (err) {
             console.error('Error starting match after countdown:', err);
           }
@@ -305,32 +315,58 @@ export default function GameRoomPage() {
 
       return () => clearInterval(interval);
     }
-  }, [game, myPlayer]);
+  }, [countdownGameId, countdownStatus, countdownPhase, countdownEndsAtVal, hasMyPlayer]);
 
-  // 5. Turn timer clock (45s base turn timer)
+  // 5. Turn timer clock (60s base turn timer) — Uses stable values to avoid recreating on every snapshot
+  const turnDeadlineRef = useRef<number | undefined>(undefined);
+  const turnUidRef = useRef<string | undefined>(undefined);
+  const gameStatusRef = useRef<string | undefined>(undefined);
+  const gameIdRef = useRef<string | undefined>(undefined);
+
+  // Keep refs up to date without triggering effect re-runs
+  useEffect(() => {
+    turnDeadlineRef.current = game?.turnDeadline;
+    gameStatusRef.current = game?.status;
+    gameIdRef.current = game?.gameId;
+  }, [game?.turnDeadline, game?.status, game?.gameId]);
+
   useEffect(() => {
     if (!game || game.status !== 'PLAYING' || !game.turnDeadline) return;
 
     timeoutHandledRef.current = false;
+    turnUidRef.current = game.turnUid;
+
+    const deadline = game.turnDeadline;
+    const currentGameId = game.gameId;
+    const currentTurnUid = game.turnUid || '';
+
+    const isMyTurn = currentTurnUid === user?.uid;
 
     const interval = setInterval(() => {
       const now = Date.now();
-      const diff = Math.max(0, Math.ceil((game.turnDeadline! - now) / 1000));
-      setTurnTimeLeft(diff);
+      const rawDiff = Math.ceil((deadline - now) / 1000);
+      const displayDiff = Math.max(0, rawDiff);
+      setTurnTimeLeft(displayDiff);
 
-      if (diff === 10) {
+      if (displayDiff === 10) {
         soundManager.playCountdownTick();
       }
 
-      if (diff <= 0 && !timeoutHandledRef.current) {
+      // If it is my turn: trigger timeout immediately when diff <= 0
+      // If it is opponent's turn: ONLY trigger timeout after a safe grace period (rawDiff <= -8)
+      // to prevent clock desync/lag on opponent device from prematurely timing out the active player!
+      const shouldTrigger = isMyTurn ? rawDiff <= 0 : rawDiff <= -8;
+
+      if (shouldTrigger && !timeoutHandledRef.current) {
         timeoutHandledRef.current = true;
         clearInterval(interval);
-        handleTurnTimeout(game.gameId, game.turnUid || '');
+        handleTurnTimeout(currentGameId, currentTurnUid, user?.uid);
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [game]);
+  // Only re-run when the actual turn changes (new deadline or new turn player)
+  }, [game?.turnDeadline, game?.turnUid, game?.status, user?.uid]);
 
   // 6. Turn notification chime & optimistic state reset
   useEffect(() => {
@@ -666,7 +702,29 @@ export default function GameRoomPage() {
     optimisticHasDrawn !== null
       ? optimisticHasDrawn
       : Boolean(game?.hasDrawn) || Boolean(myPlayer?.cards && myPlayer.cards.length >= 14);
-  const currentHandPenalty = myPlayer?.cards ? calculateLossPoints(myPlayer.cards, wildJokerRank) : 0;
+
+  const liveHandEvaluation = useMemo(() => {
+    if (handGroups.length > 0) {
+      return calculateLiveHandScore(handGroups, wildJokerRank);
+    }
+    if (myPlayer?.cards && myPlayer.cards.length > 0) {
+      const best = findBestMelds(myPlayer.cards, wildJokerRank);
+      return calculateLiveHandScore(best, wildJokerRank);
+    }
+    return {
+      score: 80,
+      pureSequenceCount: 0,
+      totalSequenceCount: 0,
+      validSetsCount: 0,
+      totalMeldPoints: 0,
+      hasPureSeq: false,
+      hasTwoSeq: false,
+      isWinningHand: false,
+      unmatchedCardCount: 0,
+    };
+  }, [handGroups, myPlayer?.cards, wildJokerRank]);
+
+  const currentHandPenalty = liveHandEvaluation.score;
 
   const handleLeaveTable = async () => {
     if (!game || !user) {
@@ -1385,20 +1443,20 @@ export default function GameRoomPage() {
                               {meldStatus.type === 'set' ? (
                                 meldStatus.hasJoker ? (
                                   <span className="px-1 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black shadow flex items-center gap-0.5">
-                                    ⭐ SET
+                                    ⭐ SET (+20)
                                   </span>
                                 ) : (
                                   <span className="px-1 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black">
-                                    ✓ SET
+                                    ✓ SET (+20)
                                   </span>
                                 )
                               ) : meldStatus.type === 'pure_seq' ? (
                                 <span className="px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-black">
-                                  ✓ PURE
+                                  ✓ PURE (+20)
                                 </span>
                               ) : meldStatus.type === 'impure_seq' ? (
                                 <span className="px-1 py-0.2 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 font-black">
-                                  ⭐ JOKER
+                                  ⭐ JOKER (+20)
                                 </span>
                               ) : (
                                 <span className="text-slate-400">({group.length})</span>
@@ -1522,16 +1580,35 @@ export default function GameRoomPage() {
                             )}
                           </div>
 
-                          {/* Live Hand Penalty Score */}
-                          <div
-                            className="py-0.5 px-2.5 rounded-full bg-black/80 border border-white/15 text-[8px] sm:text-[9px] flex items-center gap-1.5"
-                            title="Unmatched cards penalty score (Goal: 0 Pts to win)"
-                          >
-                            <span className="text-slate-400">Score:</span>
-                            <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {currentHandPenalty} Pts
-                            </span>
-                            <span className="text-amber-300 text-[7px] hidden xs:inline">(Goal: 0 🏆)</span>
+                          {/* Live Hand Score, Set Points & Penalty */}
+                          <div className="flex items-center gap-1.5">
+                            {liveHandEvaluation.totalMeldPoints > 0 && (
+                              <div
+                                className="py-0.5 px-2 rounded-full bg-amber-500/20 border border-amber-400/40 text-[8px] sm:text-[9px] flex items-center gap-1 text-amber-300 font-bold"
+                                title="Points awarded for valid sets & sequences (+20 Pts per valid meld)"
+                              >
+                                <span>⭐</span>
+                                <span className="font-mono font-black">+{liveHandEvaluation.totalMeldPoints} Pts</span>
+                                {liveHandEvaluation.validSetsCount > 0 && (
+                                  <span className="text-[7px] text-amber-200/80">({liveHandEvaluation.validSetsCount} Set{liveHandEvaluation.validSetsCount > 1 ? 's' : ''})</span>
+                                )}
+                              </div>
+                            )}
+
+                            <div
+                              className="py-0.5 px-2.5 rounded-full bg-black/80 border border-white/15 text-[8px] sm:text-[9px] flex items-center gap-1.5"
+                              title="Hand penalty score (Goal: 0 Pts to win)"
+                            >
+                              <span className="text-slate-400">Penalty:</span>
+                              <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {currentHandPenalty} Pts
+                              </span>
+                              {currentHandPenalty === 0 ? (
+                                <span className="text-emerald-300 font-bold text-[7px] hidden xs:inline">Goal Reached! 🏆</span>
+                              ) : (
+                                <span className="text-amber-300 text-[7px] hidden xs:inline">(Goal: 0 🏆)</span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -1621,7 +1698,7 @@ export default function GameRoomPage() {
                             type="button"
                             data-testid="dock-btn-drop"
                             onClick={() => setShowDropModal(true)}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            disabled={actionLoading || game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
                             className="min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-rose-800/40 to-red-950/60 hover:from-rose-700/60 hover:to-red-900/80 border border-rose-500/60 text-rose-200 font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40 select-none"
                             title="Drop hand"
                             aria-label="Drop hand"
@@ -1846,6 +1923,38 @@ export default function GameRoomPage() {
             </div>
           );
         })()}
+
+        {/* 
+          DROPPED PLAYER OVERLAY (Displayed when player drops from active match)
+        */}
+        {myPlayer?.status === 'dropped' && game?.status !== 'RESULT' && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-[#12131e] border border-rose-500/50 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+              <div className="w-14 h-14 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto text-2xl">
+                🏳️
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">You Dropped From Match</h3>
+                <p className="text-xs text-rose-300 font-semibold mt-1">
+                  {myPlayer.dropPenaltyRupees
+                    ? `Penalty: -₹${myPlayer.dropPenaltyRupees} (${myPlayer.score || (myPlayer.isFirstDrop ? 20 : 40)} Pts)`
+                    : `${myPlayer.score || 20} Points Drop Penalty Incurred`}
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Your drop penalty has been deducted and any remaining buy-in has been refunded to your wallet.
+              </p>
+              <div className="pt-2 flex flex-col gap-2">
+                <Link
+                  href="/lobby"
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-xs uppercase shadow-lg shadow-amber-500/30 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Return to Lobby
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 
           MATCH RESULT OVERLAY 

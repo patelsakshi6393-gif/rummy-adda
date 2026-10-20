@@ -436,10 +436,8 @@ export async function leaveMatchQueue(
 export async function sendPlayerHeartbeat(gameId: string, playerUid: string): Promise<void> {
   try {
     const pRef = doc(db, 'games', gameId, 'players', playerUid);
-    const gRef = doc(db, 'games', gameId);
     const nowIso = new Date().toISOString();
     await updateDoc(pRef, { lastSeen: nowIso, connected: true });
-    await updateDoc(gRef, { updatedAt: nowIso });
   } catch {
     // ignore silent network blip
   }
@@ -890,6 +888,7 @@ export async function startMatch(gameId: string): Promise<void> {
 
   const playersSnap = await getDocs(playersRef);
   const playersList = playersSnap.docs.map((d) => d.data() as GamePlayerState);
+  playersList.sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
   if (playersList.length < 2) {
     return; // Need at least 2 players
@@ -1061,6 +1060,7 @@ export async function drawCard(gameId: string, playerUid: string, source: 'open'
     tx.update(playerRef, {
       cards: updatedHand,
       cardCount: updatedHand.length,
+      missedTurns: 0,
     });
   });
 }
@@ -1072,6 +1072,11 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
   const gameRef = doc(db, 'games', gameId);
   const playerRef = doc(db, 'games', gameId, 'players', playerUid);
   const playersRef = collection(db, 'games', gameId, 'players');
+
+  // Discover all seated players beforehand outside transaction for speed and transaction isolation
+  const pSnapAll = await getDocs(playersRef);
+  const discoveredUids = pSnapAll.docs.map((d) => d.id);
+  const cachedPlayers = pSnapAll.docs.map((d) => d.data() as GamePlayerState);
 
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
@@ -1093,15 +1098,20 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
     // Read ALL active player docs inside the transaction for consistency
     const allPlayerUids = Array.from(new Set([
       ...(gameData.playerUids || []),
+      ...discoveredUids,
       playerUid,
     ]));
 
-    const playerSnaps = await Promise.all(
+    let playerSnaps = await Promise.all(
       allPlayerUids.map((pUid) => tx.get(doc(db, 'games', gameId, 'players', pUid)))
     );
-    const playerDocs: GamePlayerState[] = playerSnaps
+    let playerDocs: GamePlayerState[] = playerSnaps
       .filter((s) => s.exists())
       .map((s) => s.data() as GamePlayerState);
+
+    if (playerDocs.length === 0) {
+      playerDocs = cachedPlayers;
+    }
 
     let cardIdx = currentHand.findIndex((c) => c.id === cardToDiscard.id);
     if (cardIdx === -1) {
@@ -1135,6 +1145,7 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
       cards: updatedHand,
       cardCount: updatedHand.length,
       turnsCount: (playerData.turnsCount || 0) + 1,
+      missedTurns: 0,
     });
 
     tx.update(gameRef, {
@@ -1533,7 +1544,7 @@ export async function settleLoserLoss(
 /**
  * Handle turn timeout with 60s -> 5s -> 5s -> Auto Drop
  */
-export async function handleTurnTimeout(gameId: string, currentTurnUid: string): Promise<void> {
+export async function handleTurnTimeout(gameId: string, currentTurnUid: string, callerUid?: string): Promise<void> {
   const gameRef = doc(db, 'games', gameId);
   const playerRef = doc(db, 'games', gameId, 'players', currentTurnUid);
   const playersRef = collection(db, 'games', gameId, 'players');
@@ -1549,6 +1560,23 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
 
     if (game.status !== 'PLAYING' || game.turnUid !== currentTurnUid) return null;
 
+    const now = Date.now();
+    // Guard against premature timeout from opponent devices with skewed clocks:
+    // If caller is an opponent, require at least 5000ms grace past server deadline.
+    // If caller is the active player itself, allow auto-pass at deadline.
+    const isOpponentCaller = Boolean(callerUid && callerUid !== currentTurnUid);
+    const minRequiredTime = isOpponentCaller
+      ? (game.turnDeadline || 0) + 5000
+      : (game.turnDeadline || 0) - 1500;
+
+    if (game.turnDeadline && now < minRequiredTime) {
+      return null;
+    }
+
+    if (game.turnStartedAt && now - game.turnStartedAt < 45000) {
+      return null;
+    }
+
     const allPlayerUids = Array.from(new Set([
       ...(game.playerUids || []),
       ...discoveredUids,
@@ -1563,117 +1591,164 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string):
       }
     }
 
-    const extCount = game.turnExtensionCount || 0;
-    const now = Date.now();
+    const timedOutPlayer = allPlayers.find((p) => p.uid === currentTurnUid);
+    if (!timedOutPlayer) return null;
 
-    // 2. ALL WRITES AFTER
-    if (extCount < 2) {
-      tx.update(gameRef, {
-        turnDeadline: now + 5000,
-        turnExtensionCount: extCount + 1,
-        updatedAt: new Date().toISOString(),
-      });
-      return null;
-    } else {
-      // Auto-drop timed out player
-      const timedOutPlayer = allPlayers.find((p) => p.uid === currentTurnUid);
-      const isFirstDrop = (timedOutPlayer?.turnsCount || 0) === 0 && !game.hasDrawn;
-      const dropPts = isFirstDrop ? 20 : 40;
-      const entryFee = game.entryFee || 20;
-      const dropPenaltyRupees = isFirstDrop
-        ? Math.round(entryFee * 0.25 * 100) / 100
-        : Math.round(entryFee * 0.50 * 100) / 100;
+    const currentMissed = timedOutPlayer.missedTurns || 0;
 
-      tx.update(playerRef, {
-        status: 'dropped',
-        score: dropPts,
-        dropPenalty: dropPts,
-        dropPenaltyRupees,
-        isFirstDrop,
-      });
+    // Check if player has fewer than 2 strikes (3rd strike = auto-drop)
+    if (currentMissed < 2) {
+      // Strike 1 or 2: Auto-play turn / pass turn without dropping player!
+      const currentHand = [...(timedOutPlayer.cards || [])];
+      let updatedHand = currentHand;
+      let newOpenDeck = [...(game.openDeck || [])];
 
-      const remainingActive = allPlayers
+      if (Boolean(game.hasDrawn) || currentHand.length >= 14) {
+        // Player already drew: discard last/drawn card to open deck
+        const discarded = updatedHand.pop();
+        if (discarded) {
+          newOpenDeck.push(discarded);
+        }
+      }
+
+      // Determine next clockwise active player
+      const otherActivePlayers = allPlayers
         .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
         .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
-      if (remainingActive.length <= 1) {
-        const winner = remainingActive[0];
-        if (winner) {
-          const scores: Record<string, number> = {};
-          const penalties: Record<string, string> = {};
-          const payouts: Record<string, number> = {};
-          let totalGrossPot = 0;
-          let totalPointsLost = 0;
+      let nextPlayerUid = currentTurnUid;
+      if (otherActivePlayers.length > 0) {
+        const currentSeat = timedOutPlayer.seatIndex || 0;
+        const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > currentSeat);
+        nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
+      }
 
-          for (const p of allPlayers) {
-            if (p.uid === winner.uid) {
-              penalties[p.uid] = 'Winner';
-            } else {
-              const pDropPts = p.uid === currentTurnUid ? dropPts : (p.score || 40);
-              const pLossRupees = p.uid === currentTurnUid
-                ? dropPenaltyRupees
-                : (p.dropPenaltyRupees || (pDropPts === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100));
-              scores[p.uid] = pDropPts;
-              penalties[p.uid] = `Auto-Dropped (${pDropPts} pts, -₹${pLossRupees})`;
-              totalGrossPot += pLossRupees;
-              totalPointsLost += pDropPts;
-            }
+      // Update player with strike count, keep status 'playing'
+      tx.update(playerRef, {
+        cards: updatedHand,
+        cardCount: updatedHand.length,
+        missedTurns: currentMissed + 1,
+      });
+
+      tx.update(gameRef, {
+        openDeck: newOpenDeck,
+        turnUid: nextPlayerUid,
+        turnStartedAt: now,
+        turnDeadline: now + 60000,
+        turnExtensionCount: 0,
+        hasDrawn: false,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return null;
+    }
+
+    // 3rd Strike: Player missed 3 consecutive turns without playing -> Auto-drop!
+    const isFirstDrop = (timedOutPlayer.turnsCount || 0) === 0 && !game.hasDrawn;
+    const dropPts = isFirstDrop ? 20 : 40;
+    const entryFee = game.entryFee || 20;
+    const dropPenaltyRupees = isFirstDrop
+      ? Math.round(entryFee * 0.25 * 100) / 100
+      : Math.round(entryFee * 0.50 * 100) / 100;
+
+    tx.update(playerRef, {
+      status: 'dropped',
+      score: dropPts,
+      dropPenalty: dropPts,
+      dropPenaltyRupees,
+      isFirstDrop,
+      missedTurns: currentMissed + 1,
+    });
+
+    const remainingActive = allPlayers
+      .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
+
+    if (remainingActive.length <= 1) {
+      const winner = remainingActive[0];
+      if (winner) {
+        const scores: Record<string, number> = {};
+        const penalties: Record<string, string> = {};
+        const payouts: Record<string, number> = {};
+        let totalGrossPot = 0;
+        let totalPointsLost = 0;
+
+        for (const p of allPlayers) {
+          if (p.uid === winner.uid) {
+            penalties[p.uid] = 'Winner';
+          } else {
+            const pDropPts = p.uid === currentTurnUid ? dropPts : (p.score || 40);
+            const pLossRupees = p.uid === currentTurnUid
+              ? dropPenaltyRupees
+              : (p.dropPenaltyRupees || (pDropPts === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100));
+            scores[p.uid] = pDropPts;
+            penalties[p.uid] = `Auto-Dropped (${pDropPts} pts, -₹${pLossRupees})`;
+            totalGrossPot += pLossRupees;
+            totalPointsLost += pDropPts;
           }
-          scores[winner.uid] = totalPointsLost;
+        }
+        scores[winner.uid] = totalPointsLost;
 
-          const feePercent = 14;
-          const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
-          const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
-          payouts[winner.uid] = playerNetShare;
-          const winnerBuyInRefund = winner.entryPaid || entryFee;
+        const feePercent = 14;
+        const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+        const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
+        payouts[winner.uid] = playerNetShare;
+        const winnerBuyInRefund = winner.entryPaid || entryFee;
 
-          tx.update(gameRef, {
-            status: 'RESULT',
-            phase: 'RESULT',
+        tx.update(gameRef, {
+          status: 'RESULT',
+          phase: 'RESULT',
+          winnerUid: winner.uid,
+          resultData: {
             winnerUid: winner.uid,
-            resultData: {
-              winnerUid: winner.uid,
-              scores,
-              penalties,
-              grossWin: totalGrossPot,
-              platformFee,
-              feePercent,
-              adminShare: platformFee,
-              playerNetShare,
-              payouts,
-              winnerBuyInRefund,
-              settlementStatus: 'completed',
-              completedAt: new Date().toISOString(),
-            },
-            updatedAt: new Date().toISOString(),
-          });
-
-          return {
-            winnerUid: winner.uid,
+            scores,
+            penalties,
             grossWin: totalGrossPot,
             platformFee,
+            feePercent,
+            adminShare: platformFee,
             playerNetShare,
-            entryBuyInRefund: winnerBuyInRefund,
-            breakdown: winner.deductionBreakdown,
-            gameMode: game.mode,
-            pointsWon: totalPointsLost,
-            pointValue: game.pointValue || (entryFee / 80),
-            entryFee,
-          };
-        }
-        return null;
+            payouts,
+            winnerBuyInRefund,
+            settlementStatus: 'completed',
+            completedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          winnerUid: winner.uid,
+          grossWin: totalGrossPot,
+          platformFee,
+          playerNetShare,
+          entryBuyInRefund: winnerBuyInRefund,
+          breakdown: winner.deductionBreakdown,
+          gameMode: game.mode,
+          pointsWon: totalPointsLost,
+          pointValue: game.pointValue || (entryFee / 80),
+          entryFee,
+        };
       } else {
-        const nextUid = remainingActive[0].uid;
         tx.update(gameRef, {
-          turnUid: nextUid,
-          turnStartedAt: now,
-          turnDeadline: now + 60000,
-          turnExtensionCount: 0,
-          hasDrawn: false,
+          status: 'RESULT',
+          phase: 'RESULT',
           updatedAt: new Date().toISOString(),
         });
         return null;
       }
+    } else {
+      const currentSeat = timedOutPlayer.seatIndex || 0;
+      const nextClockwise = remainingActive.find((p) => (p.seatIndex || 0) > currentSeat);
+      const nextUid = nextClockwise ? nextClockwise.uid : remainingActive[0].uid;
+      tx.update(gameRef, {
+        turnUid: nextUid,
+        turnStartedAt: now,
+        turnDeadline: now + 60000,
+        turnExtensionCount: 0,
+        hasDrawn: false,
+        updatedAt: new Date().toISOString(),
+      });
+      return null;
     }
   });
 
@@ -1748,6 +1823,16 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       if (pSnap.exists()) {
         allPlayers.push(pSnap.data() as GamePlayerState);
       }
+    }
+
+    // Guard: Only allow drop during active PLAYING state
+    if (game.status !== 'PLAYING') {
+      return null;
+    }
+
+    // Guard: Player already dropped
+    if (playerData.status === 'dropped') {
+      return null;
     }
 
     // Determine First Drop vs Middle Drop:
@@ -1843,10 +1928,18 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
           pointValue: game.pointValue || (entryFee / 80),
           entryFee,
         };
+      } else {
+        tx.update(gameRef, {
+          status: 'RESULT',
+          phase: 'RESULT',
+          updatedAt: new Date().toISOString(),
+        });
+        return null;
       }
-      return null;
     } else if (game.turnUid === playerUid) {
-      const nextUid = remainingActive[0].uid;
+      const currentSeat = playerData.seatIndex || 0;
+      const nextClockwise = remainingActive.find((p) => (p.seatIndex || 0) > currentSeat);
+      const nextUid = nextClockwise ? nextClockwise.uid : remainingActive[0].uid;
       const now = Date.now();
       tx.update(gameRef, {
         turnUid: nextUid,

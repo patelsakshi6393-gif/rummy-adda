@@ -201,17 +201,17 @@ export function isImpureSequence(cards: Card[], wildJokerRank?: Rank): boolean {
 
 /**
  * Check if a group is a valid Set:
- * - Strictly 3 cards of same rank (different suits for natural cards; jokers allowed to complete).
- * - "set jo hai 4 5 7 8 9 cards ka ban rha hai sirf 3 card ka set ban skta hai"
+ * - 3 or 4 cards of same rank (different suits for natural cards; jokers allowed to complete).
+ * - In Indian Rummy, a set consists of 3 or 4 cards of different suits.
  */
 export function isValidSet(cards: Card[], wildJokerRank?: Rank): boolean {
-  if (!cards || cards.length !== 3) return false;
+  if (!cards || cards.length < 3 || cards.length > 4) return false;
 
   const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
-  if (naturalCards.length === 0) return true; // 3 wild jokers count as valid master set
+  if (naturalCards.length === 0) return true; // 3 or 4 wild jokers count as valid master set
 
-  // In Indian Rummy, maximum 3 cards in set as required
-  if (naturalCards.length > 3) return false;
+  // In Indian Rummy, maximum 4 cards in a set (4 distinct suits)
+  if (naturalCards.length > 4) return false;
 
   const targetRank = naturalCards[0].rank;
   if (!naturalCards.every(c => c.rank === targetRank)) return false;
@@ -273,8 +273,8 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
       isValid: true,
       type: 'pure_seq',
       title: 'PURE SEQUENCE',
-      badgeText: `✓ PURE SEQ (${cardCount})`,
-      detailText: `Valid ${cardCount}-card Pure Sequence without jokers`,
+      badgeText: `✓ PURE SEQ (${cardCount}) • +20 Pts`,
+      detailText: `Valid ${cardCount}-card Pure Sequence without jokers (+20 points)`,
       hasJoker: false,
       jokerReplacements: [],
       points: 20,
@@ -314,8 +314,8 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
       isValid: true,
       type: 'impure_seq',
       title: 'JOKER SEQUENCE',
-      badgeText: `⭐ JOKER SEQ (${cardCount})`,
-      detailText: detail,
+      badgeText: `⭐ JOKER SEQ (${cardCount}) • +20 Pts`,
+      detailText: `${detail} (+20 points)`,
       hasJoker: true,
       jokerReplacements,
       points: 20,
@@ -323,7 +323,7 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
     };
   }
 
-  // 3. Set (Strictly 3 cards of same rank with different suits, Jokers allowed)
+  // 3. Set (3 or 4 cards of same rank with different suits, Jokers allowed)
   if (isValidSet(cards, wildJokerRank)) {
     const naturalCards = cards.filter(c => !isJokerCard(c, wildJokerRank));
     const jokerReplacements: string[] = [];
@@ -333,8 +333,8 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
         isValid: true,
         type: 'set',
         title: 'JOKER SET',
-        badgeText: `⭐ MASTER JOKER SET (3)`,
-        detailText: `All-Wild Jokers 3-Card Master Set`,
+        badgeText: `⭐ MASTER JOKER SET (${cardCount}) • +20 Pts`,
+        detailText: `All-Wild Jokers ${cardCount}-Card Master Set (+20 points)`,
         hasJoker: true,
         jokerReplacements: ['Master Wildcards'],
         points: 20,
@@ -353,15 +353,15 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
 
     if (hasJoker) {
       const detail = jokerReplacements.length > 0
-        ? `Joker acts as missing ${jokerReplacements.slice(0, 2).join('/')} in 3-Card Set of ${targetRank}s`
-        : `Joker completes 3-Card Set of ${targetRank}s`;
+        ? `Joker acts as missing ${jokerReplacements.slice(0, 2).join('/')} in ${cardCount}-Card Set of ${targetRank}s`
+        : `Joker completes ${cardCount}-Card Set of ${targetRank}s`;
 
       return {
         isValid: true,
         type: 'set',
         title: 'JOKER SET',
-        badgeText: `⭐ JOKER SET (3)`,
-        detailText: detail,
+        badgeText: `⭐ JOKER SET (${cardCount}) • +20 Pts`,
+        detailText: `${detail} (+20 points)`,
         hasJoker: true,
         jokerReplacements,
         points: 20,
@@ -369,13 +369,13 @@ export function getGroupMeldStatus(cards: Card[], wildJokerRank?: Rank): GroupMe
       };
     }
 
-    // Natural Set without Jokers (Strictly 3 cards)
+    // Natural Set without Jokers (3 or 4 cards)
     return {
       isValid: true,
       type: 'set',
       title: 'VALID SET',
-      badgeText: `✓ VALID SET (3)`,
-      detailText: `Valid natural 3-Card Set of ${targetRank}s`,
+      badgeText: `✓ VALID SET (${cardCount}) • +20 Pts`,
+      detailText: `Valid natural ${cardCount}-Card Set of ${targetRank}s (+20 points)`,
       hasJoker: false,
       jokerReplacements: [],
       points: 20,
@@ -505,14 +505,147 @@ export function validateDeclaration(
 }
 
 /**
- * Calculates loser points based on unmatched cards (max 80 points)
+ * Calculates loser points based on unmatched cards (max 80 points) strictly according to Indian Rummy rules:
+ * - If no pure sequence: all cards count towards penalty (max 80).
+ * - If 1 pure sequence: pure sequence cards are exempt; other cards count.
+ * - If 2 sequences (1 pure + 1 second sequence): all valid sequences and valid sets are exempt; only unmatched cards count.
  */
 export function calculateLossPoints(cards: Card[], wildJokerRank?: Rank): number {
-  let score = 0;
-  for (const card of cards) {
-    score += getCardPoint(card, wildJokerRank);
+  if (!cards || cards.length === 0) return 0;
+  const bestMelds = findBestMelds(cards, wildJokerRank);
+  const evaluation = calculateLiveHandScore(bestMelds, wildJokerRank);
+  return evaluation.score;
+}
+
+export interface LiveHandScoreResult {
+  score: number;             // 0 to 80 penalty points (0 = goal reached)
+  pureSequenceCount: number; // Number of valid pure sequences
+  totalSequenceCount: number;// Pure + Impure sequences
+  validSetsCount: number;    // Number of valid sets
+  totalMeldPoints: number;   // 20 points per valid set / sequence meld
+  hasPureSeq: boolean;       // Meets 1st requirement of Indian Rummy
+  hasTwoSeq: boolean;        // Meets 2nd requirement of Indian Rummy
+  isWinningHand: boolean;    // Valid 13-card declare ready
+  unmatchedCardCount: number;
+}
+
+/**
+ * Calculates real-time hand penalty score (0-80) and meld bonus points (+20 per meld)
+ * strictly adhering to Indian Rummy rules:
+ * 1. Requires at least 1 Pure Sequence. Without it, all cards (except jokers) count as penalty points.
+ * 2. Requires at least 2 Sequences. With 1 Pure Seq, only the pure sequence cards are exempt from penalty.
+ * 3. With 1 Pure Seq + 1 additional Sequence: ALL valid sequences AND valid sets become 0 penalty!
+ *    Only unmatched / invalid group cards count towards penalty score.
+ * 4. Awards 20 points per valid set/meld.
+ */
+export function calculateLiveHandScore(
+  cardGroups: Card[][],
+  wildJokerRank?: Rank
+): LiveHandScoreResult {
+  if (!cardGroups || cardGroups.length === 0) {
+    return {
+      score: 80,
+      pureSequenceCount: 0,
+      totalSequenceCount: 0,
+      validSetsCount: 0,
+      totalMeldPoints: 0,
+      hasPureSeq: false,
+      hasTwoSeq: false,
+      isWinningHand: false,
+      unmatchedCardCount: 0,
+    };
   }
-  return Math.min(80, score);
+
+  let pureSequenceCount = 0;
+  let totalSequenceCount = 0;
+  let validSetsCount = 0;
+
+  const classified = cardGroups.map((group) => {
+    if (isPureSequence(group, wildJokerRank)) {
+      pureSequenceCount++;
+      totalSequenceCount++;
+      return { group, type: 'pure' as const };
+    }
+    if (isImpureSequence(group, wildJokerRank)) {
+      totalSequenceCount++;
+      return { group, type: 'impure' as const };
+    }
+    if (isValidSet(group, wildJokerRank)) {
+      validSetsCount++;
+      return { group, type: 'set' as const };
+    }
+    return { group, type: 'invalid' as const };
+  });
+
+  const hasPureSeq = pureSequenceCount >= 1;
+  const hasTwoSeq = totalSequenceCount >= 2;
+  const totalMeldCount = totalSequenceCount + validSetsCount;
+  const totalMeldPoints = totalMeldCount * 20;
+
+  const totalCards = cardGroups.reduce((acc, g) => acc + g.length, 0);
+  const isAllValid = classified.every((c) => c.type !== 'invalid');
+  const isWinningHand = totalCards === 13 && hasPureSeq && hasTwoSeq && isAllValid;
+
+  if (isWinningHand) {
+    return {
+      score: 0,
+      pureSequenceCount,
+      totalSequenceCount,
+      validSetsCount,
+      totalMeldPoints,
+      hasPureSeq,
+      hasTwoSeq,
+      isWinningHand: true,
+      unmatchedCardCount: 0,
+    };
+  }
+
+  let penalty = 0;
+  let unmatchedCardCount = 0;
+
+  if (!hasPureSeq) {
+    // No pure sequence: all cards in hand count (except wild jokers)
+    for (const group of cardGroups) {
+      for (const card of group) {
+        penalty += getCardPoint(card, wildJokerRank);
+        unmatchedCardCount++;
+      }
+    }
+  } else if (!hasTwoSeq) {
+    // Pure sequence exists, but no second sequence: only pure sequence(s) are exempt
+    for (const c of classified) {
+      if (c.type === 'pure') {
+        continue;
+      }
+      for (const card of c.group) {
+        penalty += getCardPoint(card, wildJokerRank);
+        unmatchedCardCount++;
+      }
+    }
+  } else {
+    // Both sequence conditions met: all valid sequences AND all valid sets are exempt (0 penalty)!
+    for (const c of classified) {
+      if (c.type === 'pure' || c.type === 'impure' || c.type === 'set') {
+        continue;
+      }
+      for (const card of c.group) {
+        penalty += getCardPoint(card, wildJokerRank);
+        unmatchedCardCount++;
+      }
+    }
+  }
+
+  return {
+    score: Math.min(80, penalty),
+    pureSequenceCount,
+    totalSequenceCount,
+    validSetsCount,
+    totalMeldPoints,
+    hasPureSeq,
+    hasTwoSeq,
+    isWinningHand: false,
+    unmatchedCardCount,
+  };
 }
 
 /**

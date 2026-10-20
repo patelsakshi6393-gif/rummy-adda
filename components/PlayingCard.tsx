@@ -19,7 +19,7 @@ interface PlayingCardProps {
   className?: string;
 }
 
-export function PlayingCard({
+function PlayingCardInner({
   card,
   wildJokerRank,
   isSelected,
@@ -135,3 +135,18 @@ export function PlayingCard({
     </div>
   );
 }
+
+export const PlayingCard = React.memo(PlayingCardInner, (prev, next) => {
+  return (
+    prev.card.id === next.card.id &&
+    prev.card.suit === next.card.suit &&
+    prev.card.rank === next.card.rank &&
+    prev.card.isPrintedJoker === next.card.isPrintedJoker &&
+    prev.isSelected === next.isSelected &&
+    prev.wildJokerRank === next.wildJokerRank &&
+    prev.disabled === next.disabled &&
+    prev.size === next.size &&
+    prev.className === next.className
+  );
+});
+
