@@ -1100,14 +1100,12 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
       ...discoveredUids,
     ]));
 
-    const playerDocs: GamePlayerState[] = [];
-    for (const pUid of allPlayerUids) {
-      const pRef = doc(db, 'games', gameId, 'players', pUid);
-      const pSnap = await tx.get(pRef);
-      if (pSnap.exists()) {
-        playerDocs.push(pSnap.data() as GamePlayerState);
-      }
-    }
+    const playerSnaps = await Promise.all(
+      allPlayerUids.map((pUid) => tx.get(doc(db, 'games', gameId, 'players', pUid)))
+    );
+    const playerDocs: GamePlayerState[] = playerSnaps
+      .filter((s) => s.exists())
+      .map((s) => s.data() as GamePlayerState);
 
     let cardIdx = currentHand.findIndex((c) => c.id === cardToDiscard.id);
     if (cardIdx === -1) {
@@ -1260,18 +1258,14 @@ export async function playBotTurn(gameId: string, botUid: string): Promise<void>
       botUid,
     ]));
 
-    const playerDocs: GamePlayerState[] = [];
-    for (const pUid of allPlayerUids) {
-      if (pUid === botUid) {
-        playerDocs.push(botData);
-      } else {
-        const pRef = doc(db, 'games', gameId, 'players', pUid);
-        const pSnap = await tx.get(pRef);
-        if (pSnap.exists()) {
-          playerDocs.push(pSnap.data() as GamePlayerState);
-        }
-      }
-    }
+    const otherUids = allPlayerUids.filter((id) => id !== botUid);
+    const playerSnaps = await Promise.all(
+      otherUids.map((pUid) => tx.get(doc(db, 'games', gameId, 'players', pUid)))
+    );
+    const playerDocs: GamePlayerState[] = [
+      botData,
+      ...playerSnaps.filter((s) => s.exists()).map((s) => s.data() as GamePlayerState),
+    ];
 
     // 2. BOT DRAWS CARD
     let closedDeck: Card[] = [];

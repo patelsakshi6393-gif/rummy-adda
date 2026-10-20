@@ -60,6 +60,8 @@ import {
   ArrowLeft,
   ShieldAlert,
   Sparkles,
+  Layers,
+  ArrowUpDown,
   X,
   Copy,
   Check,
@@ -99,6 +101,8 @@ export default function GameRoomPage() {
     fromGroupIdx: number;
     fromCardIdx: number;
   } | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isTouchDraggingRef = useRef<boolean>(false);
 
   // Time remaining on active turn (seconds)
   const [turnTimeLeft, setTurnTimeLeft] = useState<number>(45);
@@ -188,7 +192,7 @@ export default function GameRoomPage() {
         } finally {
           isBotExecutingRef.current = false;
         }
-      }, 1000);
+      }, 400);
       return () => {
         clearTimeout(timer);
         isBotExecutingRef.current = false;
@@ -439,30 +443,6 @@ export default function GameRoomPage() {
       setHandGroups(updated);
       setSelectedCardIds([]);
       soundManager.playCardDraw();
-
-      const meldStatus = getGroupMeldStatus(selectedCardsList, wildJokerRank);
-      if (meldStatus.isValid) {
-        if (meldStatus.type === 'set') {
-          if (meldStatus.hasJoker) {
-            setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Set Formed with Joker! (${meldStatus.detailText}) +20 Pts!`);
-          } else {
-            setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Natural Set Formed! +20 Points Earned!`);
-          }
-        } else if (meldStatus.type === 'impure_seq') {
-          setToastNotification(`🎉 Valid Sequence Completed with Joker! (${meldStatus.detailText}) +20 Pts!`);
-        } else if (meldStatus.type === 'pure_seq') {
-          setToastNotification(`🎉 Valid ${selectedCardsList.length}-Card Pure Sequence Formed! +20 Points Earned!`);
-        }
-        setTimeout(() => setToastNotification(null), 3500);
-      } else {
-        setToastNotification(`Group of ${selectedCardsList.length} cards formed!`);
-        setTimeout(() => setToastNotification(null), 2500);
-      }
-
-      if (myPlayer) {
-        const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
-        updateDoc(pRef, { cards: updated.flat() });
-      }
     }
   };
 
@@ -476,10 +456,6 @@ export default function GameRoomPage() {
     }
     setHandGroups(otherGroups);
     soundManager.playCardDraw();
-    if (myPlayer) {
-      const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
-      updateDoc(pRef, { cards: otherGroups.flat() });
-    }
   };
 
   // Move card between groups or reorder within group
@@ -491,6 +467,11 @@ export default function GameRoomPage() {
     toCardIdx?: number
   ) => {
     if (fromGroupIdx < 0 || fromGroupIdx >= handGroups.length) return;
+    // Guard against accidental drop on same group without valid new position
+    if (toGroupIdx === fromGroupIdx && (typeof toCardIdx !== 'number' || toCardIdx === fromCardIdx)) {
+      return;
+    }
+
     const sourceGroup = [...handGroups[fromGroupIdx]];
     const [cardToMove] = sourceGroup.splice(fromCardIdx, 1);
     if (!cardToMove) return;
@@ -518,11 +499,6 @@ export default function GameRoomPage() {
     const filtered = newGroups.filter((g) => g.length > 0);
     setHandGroups(filtered);
     soundManager.playCardDraw();
-
-    if (myPlayer) {
-      const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
-      updateDoc(pRef, { cards: filtered.flat() });
-    }
   };
 
   // Move selected card to left side or right side
@@ -591,15 +567,35 @@ export default function GameRoomPage() {
 
   // Touch drag and drop handlers for mobile devices
   const handleTouchStartCard = (
+    e: React.TouchEvent,
     cardId: string,
     fromGroupIdx: number,
     fromCardIdx: number
   ) => {
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    isTouchDraggingRef.current = false;
     setTouchDragCard({ cardId, fromGroupIdx, fromCardIdx });
   };
 
+  const handleTouchMoveCard = (e: React.TouchEvent) => {
+    if (!touchStartPosRef.current) return;
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+    const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+    if (dx > 12 || dy > 12) {
+      isTouchDraggingRef.current = true;
+    }
+  };
+
   const handleTouchEndCard = (e: React.TouchEvent) => {
-    if (!touchDragCard) return;
+    if (!touchDragCard || !isTouchDraggingRef.current) {
+      setTouchDragCard(null);
+      touchStartPosRef.current = null;
+      isTouchDraggingRef.current = false;
+      return;
+    }
+
     const touch = e.changedTouches[0];
     const elem = document.elementFromPoint(touch.clientX, touch.clientY);
     const discardTarget = elem?.closest('[data-drop-discard]');
@@ -609,13 +605,17 @@ export default function GameRoomPage() {
       handleDiscard(touchDragCard.cardId);
     } else if (dropTarget) {
       const targetGroup = parseInt(dropTarget.getAttribute('data-drop-group') || '0', 10);
-      moveCardBetweenGroups(
-        touchDragCard.fromGroupIdx,
-        touchDragCard.fromCardIdx,
-        targetGroup
-      );
+      if (targetGroup !== touchDragCard.fromGroupIdx) {
+        moveCardBetweenGroups(
+          touchDragCard.fromGroupIdx,
+          touchDragCard.fromCardIdx,
+          targetGroup
+        );
+      }
     }
     setTouchDragCard(null);
+    touchStartPosRef.current = null;
+    isTouchDraggingRef.current = false;
   };
 
   // Open Declare Modal with grouped hand
@@ -729,15 +729,37 @@ export default function GameRoomPage() {
       return;
     }
 
+    // Optimistic UI update: Remove discarded card from local state immediately
+    const prevHandGroups = handGroups;
+    const prevMyPlayer = myPlayer;
+    const discardedId = cardObj.id;
+
+    const optimisticGroups = handGroups
+      .map((grp) => grp.filter((c) => c.id !== discardedId))
+      .filter((grp) => grp.length > 0);
+    setHandGroups(optimisticGroups);
+
+    if (myPlayer) {
+      const remainingCards = (myPlayer.cards || []).filter((c) => c.id !== discardedId);
+      setMyPlayer({
+        ...myPlayer,
+        cards: remainingCards,
+        cardCount: remainingCards.length,
+      });
+    }
+
+    setSelectedCardIds([]);
+    soundManager.playCardDiscard();
     setActionLoading(true);
     setErrorToast(null);
     const safetyTimer = setTimeout(() => setActionLoading(false), 4000);
 
     try {
-      soundManager.playCardDiscard();
       await discardCard(game.gameId, user.uid, cardObj);
-      setSelectedCardIds([]);
     } catch (err: unknown) {
+      // Revert optimistic update on failure
+      setHandGroups(prevHandGroups);
+      setMyPlayer(prevMyPlayer);
       setErrorToast(err instanceof Error ? err.message : String(err));
     } finally {
       clearTimeout(safetyTimer);
@@ -767,10 +789,6 @@ export default function GameRoomPage() {
     setHandGroups(validMelds);
     setSelectedCardIds([]);
     soundManager.playCardDraw();
-    if (myPlayer) {
-      const pRef = doc(db, 'games', gameId, 'players', myPlayer.uid);
-      updateDoc(pRef, { cards: validMelds.flat() });
-    }
   };
 
   const handleConfirmDeclare = async () => {
@@ -850,7 +868,7 @@ export default function GameRoomPage() {
 
           {/* Reconnecting / Server sync indicator */}
           {isReconnecting && (
-            <div className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[8px] font-bold animate-pulse">
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[8px] font-bold animate-pulse">
               <Loader2 className="w-2 h-2 animate-spin" />
               <span>SYNCING</span>
             </div>
@@ -862,6 +880,7 @@ export default function GameRoomPage() {
               onClick={handleToggleAutoRotate}
               className="p-1 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] flex items-center"
               title="Rotate Screen"
+              aria-label="Rotate Screen"
             >
               <RotateCw className="w-3 h-3 text-amber-400" />
             </button>
@@ -870,6 +889,7 @@ export default function GameRoomPage() {
               onClick={() => setShowHowToPlayModal(true)}
               className="py-0.5 px-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-bold flex items-center gap-0.5"
               title="Rules"
+              aria-label="Game Rules"
             >
               <BookOpen className="w-3 h-3 text-amber-400" />
               <span className="hidden sm:inline">Rules</span>
@@ -883,6 +903,7 @@ export default function GameRoomPage() {
               }}
               className="p-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300"
               title="Audio"
+              aria-label={soundEnabled ? 'Mute Game Audio' : 'Unmute Game Audio'}
             >
               {soundEnabled ? <Volume2 className="w-3 h-3 text-amber-400" /> : <VolumeX className="w-3 h-3 text-slate-500" />}
             </button>
@@ -891,6 +912,7 @@ export default function GameRoomPage() {
               onClick={() => setShowDropModal(true)}
               disabled={game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
               className="py-0.5 px-2 rounded-md bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-[9px] font-black uppercase transition-all disabled:opacity-40"
+              aria-label="Drop Game Match"
             >
               DROP
             </button>
@@ -908,7 +930,8 @@ export default function GameRoomPage() {
             </div>
             <button
               onClick={handleToggleAutoRotate}
-              className="py-0.2 px-1.5 rounded bg-amber-400 hover:bg-amber-300 text-black text-[8px] font-black uppercase shadow shrink-0"
+              className="py-0.5 px-2 rounded bg-amber-400 hover:bg-amber-300 text-black text-[8px] font-black uppercase shadow shrink-0"
+              aria-label="Rotate table view"
             >
               Rotate
             </button>
@@ -1048,7 +1071,7 @@ export default function GameRoomPage() {
                     <div className="flex items-center gap-3 sm:gap-6 scale-90 sm:scale-100 origin-center">
                       {/* Wild Joker Display */}
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] uppercase font-black tracking-wider text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                        <span className="text-[8px] uppercase font-black tracking-wider text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded-full border border-amber-500/30">
                           JOKER
                         </span>
                         {game.wildJoker ? (
@@ -1062,8 +1085,17 @@ export default function GameRoomPage() {
                       <div className="flex flex-col items-center gap-0.5">
                         <span className="text-[8px] uppercase font-bold text-slate-300">Closed</span>
                         <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Draw card from closed deck. ${game.closedDeckCount} cards remaining.`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              handleDraw('closed');
+                            }
+                          }}
                           onClick={() => handleDraw('closed')}
-                          className={`w-9 h-13 min-[400px]:w-10 min-[400px]:h-14 sm:w-13 sm:h-18 rounded-lg bg-gradient-to-br from-rose-900 via-rose-800 to-amber-900 border-2 border-amber-400/50 shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all ${
+                          className={`w-11 h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg bg-gradient-to-br from-rose-900 via-rose-800 to-amber-900 border-2 border-amber-400/50 shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all ${
                             isMyTurn && !hasDrawn
                               ? 'ring-2 sm:ring-4 ring-amber-400 hover:scale-105 shadow-amber-500/40 animate-pulse'
                               : 'opacity-90'
@@ -1105,6 +1137,19 @@ export default function GameRoomPage() {
                         </span>
                         {game.openDeck.length > 0 ? (
                           <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label={isMyTurn && hasDrawn ? 'Discard selected card here' : 'Draw from open discard pile'}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                if (isMyTurn && !hasDrawn) {
+                                  handleDraw('open');
+                                } else if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
+                                  handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
+                                }
+                              }
+                            }}
                             onClick={() => {
                               if (isMyTurn && !hasDrawn) {
                                 handleDraw('open');
@@ -1124,12 +1169,23 @@ export default function GameRoomPage() {
                           </div>
                         ) : (
                           <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label={isMyTurn && hasDrawn ? 'Discard selected card to open slot' : 'Open deck empty'}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
+                                  handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
+                                }
+                              }
+                            }}
                             onClick={() => {
                               if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
                                 handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
                               }
                             }}
-                            className={`w-9 h-13 min-[400px]:w-10 min-[400px]:h-14 sm:w-13 sm:h-18 rounded-lg border-2 border-dashed flex items-center justify-center text-[9px] transition-colors ${
+                            className={`w-11 h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg border-2 border-dashed flex items-center justify-center text-[10px] sm:text-xs transition-colors ${
                               isMyTurn && hasDrawn
                                 ? 'border-amber-400/80 text-amber-300 cursor-pointer bg-amber-500/10'
                                 : 'border-white/20 text-slate-500'
@@ -1173,42 +1229,28 @@ export default function GameRoomPage() {
                     </div>
                   )}
 
-                  {/* Multi-Card Selection Actions Floating Bar */}
-                  {selectedCardIds.length >= 2 && (() => {
-                    const allCards = handGroups.flat().length > 0 ? handGroups.flat() : (myPlayer?.cards || []);
-                    const selCards = allCards.filter((c) => selectedCardIds.includes(c.id));
-                    const selStatus = getGroupMeldStatus(selCards, wildJokerRank);
-
-                    return (
-                      <div className="flex items-center gap-1.5 mb-0.5 animate-bounce z-40">
-                        <button
-                          onClick={handleCreateSetFromSelection}
-                          className={`py-1 px-3 rounded-full font-black text-[9px] sm:text-[10px] uppercase shadow-lg flex items-center gap-1 cursor-pointer hover:scale-105 active:scale-95 transition-all ${
-                            selStatus.isValid
-                              ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-1 ring-amber-300 shadow-amber-500/50'
-                              : 'bg-gradient-to-r from-slate-200 to-slate-400 text-black ring-1 ring-white/30'
-                          }`}
-                        >
-                          <span>{selStatus.isValid ? '⭐' : '✨'}</span>
-                          <span>
-                            {selStatus.type === 'set'
-                              ? `CREATE SET (${selectedCardIds.length}) +20`
-                              : selStatus.type === 'impure_seq'
-                              ? `CREATE JOKER SEQ (${selectedCardIds.length}) +20`
-                              : selStatus.type === 'pure_seq'
-                              ? `CREATE PURE SEQ (${selectedCardIds.length}) +20`
-                              : `GROUP (${selectedCardIds.length})`}
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => setSelectedCardIds([])}
-                          className="py-0.5 px-2 rounded-full bg-black/80 hover:bg-black text-slate-300 text-[8px] font-bold border border-white/20"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    );
-                  })()}
+                  {/* Multi-Card Selection Actions Bar */}
+                  {selectedCardIds.length >= 2 && (
+                    <div className="flex items-center gap-1.5 mb-1 z-40">
+                      <button
+                        type="button"
+                        onClick={handleCreateSetFromSelection}
+                        className="py-1 px-3.5 rounded-full font-black text-[10px] sm:text-xs uppercase shadow-lg flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-1 ring-amber-300 shadow-amber-500/40"
+                        title={`Group ${selectedCardIds.length} cards together`}
+                      >
+                        <Layers className="w-3.5 h-3.5 text-black" />
+                        <span>GROUP ({selectedCardIds.length})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCardIds([])}
+                        className="py-1 px-2.5 rounded-full bg-black/80 hover:bg-black text-slate-300 hover:text-white text-[9px] sm:text-[10px] font-bold border border-white/20 transition-colors cursor-pointer"
+                        title="Deselect cards"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
 
                   {/* Single Card Quick Movement Actions Bar */}
                   {selectedCardIds.length === 1 && (
@@ -1217,34 +1259,39 @@ export default function GameRoomPage() {
                         <button
                           onClick={() => handleDiscard(selectedCardIds[0])}
                           className="py-0.5 px-2.5 rounded-md bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black uppercase text-[9px] shadow-lg animate-pulse flex items-center gap-1 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                          aria-label="Discard selected card"
                         >
                           <span>🗑️ Discard</span>
                         </button>
                       )}
                       <button
                         onClick={() => handleMoveSelectedCard('left')}
-                        className="py-0.2 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
+                        className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
                         title="Move card left side"
+                        aria-label="Move card left side"
                       >
                         <span>← Left</span>
                       </button>
                       <button
                         onClick={() => handleMoveSelectedCard('right')}
-                        className="py-0.2 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
+                        className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
                         title="Move card right side"
+                        aria-label="Move card right side"
                       >
                         <span>Right →</span>
                       </button>
                       <button
                         onClick={() => moveCardBetweenGroups(-1, 0, -1)}
-                        className="py-0.2 px-1.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-300 font-bold border border-amber-500/30 cursor-pointer text-[8px]"
+                        className="py-0.5 px-1.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-300 font-bold border border-amber-500/30 cursor-pointer text-[8px]"
                         title="Create new group with this card"
+                        aria-label="Create new group with this card"
                       >
                         <span>+ Group</span>
                       </button>
                       <button
                         onClick={() => setSelectedCardIds([])}
-                        className="py-0.2 px-1 rounded text-slate-400 hover:text-white text-[8px] cursor-pointer"
+                        className="py-0.5 px-1 rounded text-slate-400 hover:text-white text-[8px] cursor-pointer"
+                        aria-label="Deselect card"
                       >
                         ✕
                       </button>
@@ -1253,7 +1300,7 @@ export default function GameRoomPage() {
 
                   {/* Player Hand Groups Spread Across Full Width of Screen */}
                   {handGroups.length > 0 && (
-                    <div className="w-full max-w-7xl px-1 flex items-end justify-center sm:justify-around gap-1 sm:gap-2 overflow-x-auto py-0.5 max-w-full">
+                    <div className="w-full max-w-7xl px-1 sm:px-2 flex items-end justify-center sm:justify-around gap-1.5 sm:gap-2.5 overflow-x-auto pt-3.5 pb-1 max-w-full">
                       {handGroups.map((group, groupIdx) => {
                         const meldStatus = getGroupMeldStatus(group, wildJokerRank);
                         const isOver = dragOverGroupIdx === groupIdx;
@@ -1270,7 +1317,7 @@ export default function GameRoomPage() {
                                 ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105'
                                 : meldStatus.type === 'set'
                                 ? meldStatus.hasJoker
-                                  ? 'bg-amber-500/15 border border-amber-400 shadow shadow-amber-500/20'
+                                   ? 'bg-amber-500/15 border border-amber-400 shadow shadow-amber-500/20'
                                   : 'bg-purple-500/10 border border-purple-400/50 shadow-sm'
                                 : meldStatus.type === 'pure_seq'
                                 ? 'bg-emerald-500/10 border border-emerald-500/40 shadow-sm'
@@ -1284,20 +1331,20 @@ export default function GameRoomPage() {
                               <span className="text-slate-400 font-mono">G{groupIdx + 1}</span>
                               {meldStatus.type === 'set' ? (
                                 meldStatus.hasJoker ? (
-                                  <span className="px-1 py-0.1 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[7px] sm:text-[8px] shadow flex items-center gap-0.5">
+                                  <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[7px] sm:text-[8px] shadow flex items-center gap-0.5">
                                     ⭐ SET (3)
                                   </span>
                                 ) : (
-                                  <span className="px-1 py-0.1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[7px] sm:text-[8px] font-black">
+                                  <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[7px] sm:text-[8px] font-black">
                                     ✓ SET (3)
                                   </span>
                                 )
                               ) : meldStatus.type === 'pure_seq' ? (
-                                <span className="px-1 py-0.1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[7px] sm:text-[8px] font-black">
+                                <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[7px] sm:text-[8px] font-black">
                                   ✓ PURE SEQ
                                 </span>
                               ) : meldStatus.type === 'impure_seq' ? (
-                                <span className="px-1 py-0.1 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[7px] sm:text-[8px] font-black">
+                                <span className="px-1.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[7px] sm:text-[8px] font-black">
                                   ⭐ JOKER SEQ
                                 </span>
                               ) : (
@@ -1305,17 +1352,19 @@ export default function GameRoomPage() {
                               )}
                               {handGroups.length > 1 && (
                                 <button
+                                  type="button"
                                   onClick={() => handleUngroup(groupIdx)}
-                                  className="text-slate-500 hover:text-rose-400 text-[7px] transition-colors ml-0.5"
-                                  title="Ungroup cards"
+                                  className="text-slate-500 hover:text-rose-400 text-[7px] transition-colors ml-0.5 cursor-pointer"
+                                  title={`Ungroup group ${groupIdx + 1}`}
+                                  aria-label={`Ungroup group ${groupIdx + 1}`}
                                 >
                                   ✕
                                 </button>
                               )}
                             </div>
 
-                            {/* Cards in Group */}
-                            <div className="flex items-center -space-x-3.5 min-[400px]:-space-x-3 sm:-space-x-2.5 overflow-visible px-0.5 py-0.5">
+                            {/* Cards in Group Spread Horizontally */}
+                            <div className="flex items-center -space-x-3 min-[400px]:-space-x-2.5 sm:-space-x-1.5 md:space-x-0.5 overflow-visible px-0.5 py-0.5">
                               {group.map((card, cardIdx) => {
                                 const isWild = card.rank === wildJokerRank;
                                 const isSelected = selectedCardIds.includes(card.id);
@@ -1324,13 +1373,17 @@ export default function GameRoomPage() {
                                   <div
                                     key={card.id}
                                     className="relative group/c shrink-0"
+                                    style={{
+                                      zIndex: isSelected ? 40 : cardIdx + 1,
+                                    }}
                                     draggable={true}
                                     onDragStart={(e) => handleDragStartCard(e, card.id, groupIdx, cardIdx)}
-                                    onTouchStart={() => handleTouchStartCard(card.id, groupIdx, cardIdx)}
+                                    onTouchStart={(e) => handleTouchStartCard(e, card.id, groupIdx, cardIdx)}
+                                    onTouchMove={handleTouchMoveCard}
                                     onTouchEnd={handleTouchEndCard}
                                   >
                                     {isWild && (
-                                      <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-0.5 py-0.1 rounded shadow">
+                                      <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-1 py-0.5 rounded shadow pointer-events-none">
                                         ★
                                       </span>
                                     )}
@@ -1351,13 +1404,16 @@ export default function GameRoomPage() {
 
                       {/* Drop Target to Create New Side Group */}
                       <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Create new card group"
                         data-drop-group={-1}
                         onDragOver={(e) => handleDragOverGroup(e, -1)}
                         onDrop={(e) => handleDropOnGroup(e, -1)}
-                        className="rounded-lg border border-dashed border-white/20 hover:border-amber-400/60 p-1 flex flex-col items-center justify-center text-[7px] sm:text-[8px] text-slate-500 hover:text-amber-300 cursor-pointer h-11 sm:h-13 shrink-0 transition-colors"
+                        className="rounded-lg border border-dashed border-white/20 hover:border-amber-400/60 p-1 flex flex-col items-center justify-center text-[8px] sm:text-[9px] text-slate-500 hover:text-amber-300 cursor-pointer h-19 min-[400px]:h-21 sm:h-24 md:h-27 shrink-0 transition-colors"
                         title="Drag and drop card here to place as new group"
                       >
-                        <span className="text-xs font-bold">+</span>
+                        <span className="text-sm font-bold">+</span>
                         <span>Group</span>
                       </div>
                     </div>
@@ -1365,14 +1421,20 @@ export default function GameRoomPage() {
 
                   {/* Fallback Single Flat Hand if handGroups empty */}
                   {handGroups.length === 0 && myPlayer?.cards && myPlayer.cards.length > 0 && (
-                    <div className="flex items-center justify-center -space-x-3.5 min-[400px]:-space-x-3 sm:-space-x-2.5 max-w-full overflow-x-auto py-0.5 px-2">
-                      {myPlayer.cards.map((card) => {
+                    <div className="flex items-center justify-center -space-x-3.5 min-[400px]:-space-x-3 sm:-space-x-2 md:-space-x-1 max-w-full overflow-x-auto pt-3.5 pb-1 px-2">
+                      {myPlayer.cards.map((card, cardIdx) => {
                         const isWild = card.rank === wildJokerRank;
                         const isSelected = selectedCardIds.includes(card.id);
                         return (
-                          <div key={card.id} className="relative group shrink-0">
+                          <div
+                            key={card.id}
+                            className="relative group shrink-0"
+                            style={{
+                              zIndex: isSelected ? 40 : cardIdx + 1,
+                            }}
+                          >
                             {isWild && (
-                              <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-0.5 py-0.1 rounded shadow">
+                              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-1 py-0.5 rounded shadow pointer-events-none">
                                 ★
                               </span>
                             )}
@@ -1398,31 +1460,28 @@ export default function GameRoomPage() {
                       isMyTurn && Boolean(hasDrawn)
                     );
 
-                    const completedSetsCount = handGroups.filter((g) => isValidSet(g, wildJokerRank)).length;
-
                     return (
-                      <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-0.5 shrink-0 z-40 my-0.2 px-1">
-                        {/* Ultra-compact Live Status Line: Sets Bonus & Penalty Goal */}
-                        <div className="flex items-center justify-between w-full px-1 text-[8px] sm:text-[9px] leading-tight">
-                          {/* Live Sets Made Bonus Counter (+20 Pts per Set) */}
+                      <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-0.5 shrink-0 z-40 my-0.5 px-1">
+                        {/* Live Status Line: Hand summary & Penalty Score */}
+                        <div className="flex items-center justify-between w-full px-1 text-[8px] sm:text-[9px] leading-tight mb-0.5">
+                          {/* Live Hand Cards Count & Groups */}
                           <div
-                            className="py-0.2 px-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center gap-1 font-bold text-amber-300"
-                            title="Every completed 3-card set gives +20 Points!"
+                            className="py-0.5 px-2 rounded-full bg-black/70 border border-white/10 flex items-center gap-1.5 font-bold text-slate-300"
+                            title="Cards in hand and group count"
                           >
-                            <span>⭐</span>
-                            <span className="text-slate-300">Sets:</span>
-                            <span className="font-mono font-black text-amber-300">{completedSetsCount}</span>
-                            <span className="text-emerald-400 font-mono font-bold">
-                              (+{completedSetsCount * 20} Pts)
-                            </span>
+                            <span className="text-amber-400 font-mono">♠</span>
+                            <span>Hand: <strong className="text-white font-mono">{myPlayer?.cards?.length || 13} Cards</strong></span>
+                            {handGroups.length > 1 && (
+                              <span className="text-slate-400 text-[7px] sm:text-[8px] font-normal font-mono">({handGroups.length} Groups)</span>
+                            )}
                           </div>
 
                           {/* Live Hand Penalty Score */}
                           <div
-                            className="py-0.2 px-2 rounded-full bg-black/80 border border-white/15 text-[8px] sm:text-[9px] flex items-center gap-1"
+                            className="py-0.5 px-2.5 rounded-full bg-black/80 border border-white/15 text-[8px] sm:text-[9px] flex items-center gap-1.5"
                             title="Unmatched cards penalty score (Goal: 0 Pts to win)"
                           >
-                            <span className="text-slate-400">Penalty:</span>
+                            <span className="text-slate-400">Score:</span>
                             <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                               {currentHandPenalty} Pts
                             </span>
@@ -1439,6 +1498,7 @@ export default function GameRoomPage() {
                             disabled={actionLoading || myPlayer?.status === 'dropped'}
                             className="h-8 sm:h-9 px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-rose-600/30 to-rose-900/40 hover:from-rose-600/50 hover:to-rose-800/60 border border-rose-500/60 text-rose-200 font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
                             title="Drop hand"
+                            aria-label="Drop hand"
                           >
                             <span className="tracking-wide">DROP</span>
                             <span className="text-[7px] sm:text-[8px] font-mono font-semibold text-rose-300 mt-0.5">
@@ -1452,13 +1512,14 @@ export default function GameRoomPage() {
                             onClick={handleAutoSortHand}
                             disabled={actionLoading || myPlayer?.status === 'dropped'}
                             className="h-8 sm:h-9 px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-purple-600/30 to-purple-900/40 hover:from-purple-600/50 hover:to-purple-800/60 border border-purple-500/60 text-purple-200 font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
-                            title="Sort cards into sequences and 3-card sets"
+                            title="Sort cards into sequences and sets"
+                            aria-label="Sort cards into sequences and sets"
                           >
                             <div className="flex items-center gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                              <ArrowUpDown className="w-2.5 h-2.5 text-amber-400" />
                               <span className="tracking-wide">SORT</span>
                             </div>
-                            <span className="text-[7px] text-purple-300/80 mt-0.5">Auto</span>
+                            <span className="text-[7px] text-purple-300/80 mt-0.5">Suits</span>
                           </button>
 
                           {/* 3. DISCARD BUTTON */}
@@ -1475,6 +1536,7 @@ export default function GameRoomPage() {
                                 ? 'bg-white/15 hover:bg-white/20 text-white border border-white/20 cursor-pointer'
                                 : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
                             }`}
+                            aria-label="Discard selected card"
                             title={
                               !isMyTurn
                                 ? "Opponent's turn"
@@ -1507,6 +1569,7 @@ export default function GameRoomPage() {
                                 ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 text-black cursor-pointer shadow-emerald-500/40 ring-1 ring-emerald-300'
                                 : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
                             }`}
+                            aria-label="Declare hand show"
                             title="Declare Hand Show"
                           >
                             <span className="tracking-wide">DECLARE</span>
@@ -1611,11 +1674,11 @@ export default function GameRoomPage() {
                                 : 'text-rose-400'
                             }>
                               {grpStatus.type === 'pure_seq'
-                                ? 'Pure Sequence ✓ (+20 Pts)'
+                                ? 'Pure Sequence ✓'
                                 : grpStatus.type === 'impure_seq'
                                 ? `Joker Sequence ⭐ (${grp.length})`
                                 : grpStatus.type === 'set'
-                                ? (grpStatus.hasJoker ? `Joker Set ⭐ (${grp.length}) +20 Pts` : `Valid Set ✓ (${grp.length}) +20 Pts`)
+                                ? (grpStatus.hasJoker ? `Joker Set ⭐ (${grp.length})` : `Valid Set ✓ (${grp.length})`)
                                 : 'Unmelded ✕'}
                             </span>
                           </div>
@@ -1779,7 +1842,7 @@ export default function GameRoomPage() {
                         <div className="text-left">
                           <p className="font-bold text-white flex items-center gap-1.5">
                             <span>{p.displayName}</span>
-                            {isWinner && <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1.5 py-0.2 rounded font-black">WINNER 🏆</span>}
+                            {isWinner && <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1.5 py-0.5 rounded font-black">WINNER 🏆</span>}
                           </p>
                           <p className="text-[10px] font-mono text-slate-400">{p.playerId}</p>
                         </div>
