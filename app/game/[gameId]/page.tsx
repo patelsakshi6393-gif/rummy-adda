@@ -110,6 +110,8 @@ export default function GameRoomPage() {
 
   // Action states
   const [actionLoading, setActionLoading] = useState(false);
+  const [optimisticHasDrawn, setOptimisticHasDrawn] = useState<boolean | null>(null);
+  const [isDrawingCard, setIsDrawingCard] = useState<boolean>(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [showDropModal, setShowDropModal] = useState(false);
   const [showDeclareModal, setShowDeclareModal] = useState(false);
@@ -192,7 +194,7 @@ export default function GameRoomPage() {
         } finally {
           isBotExecutingRef.current = false;
         }
-      }, 400);
+      }, 120);
       return () => {
         clearTimeout(timer);
         isBotExecutingRef.current = false;
@@ -330,8 +332,9 @@ export default function GameRoomPage() {
     return () => clearInterval(interval);
   }, [game]);
 
-  // 6. Turn notification chime
+  // 6. Turn notification chime & optimistic state reset
   useEffect(() => {
+    setOptimisticHasDrawn(null);
     if (game?.status === 'PLAYING' && game.turnUid === user?.uid) {
       soundManager.playTurnNotification();
     }
@@ -659,7 +662,10 @@ export default function GameRoomPage() {
 
   const isMyTurn = game?.status === 'PLAYING' && game.turnUid === user?.uid;
   // If player has drawn or hand has 14+ cards, hasDrawn is guaranteed true
-  const hasDrawn = Boolean(game?.hasDrawn) || Boolean(myPlayer?.cards && myPlayer.cards.length >= 14);
+  const hasDrawn =
+    optimisticHasDrawn !== null
+      ? optimisticHasDrawn
+      : Boolean(game?.hasDrawn) || Boolean(myPlayer?.cards && myPlayer.cards.length >= 14);
   const currentHandPenalty = myPlayer?.cards ? calculateLossPoints(myPlayer.cards, wildJokerRank) : 0;
 
   const handleLeaveTable = async () => {
@@ -684,16 +690,52 @@ export default function GameRoomPage() {
 
   // Actions
   const handleDraw = async (source: 'open' | 'closed') => {
-    if (!game || !user || !isMyTurn || hasDrawn || actionLoading) return;
-    setActionLoading(true);
+    if (!game || !user || !isMyTurn || hasDrawn || actionLoading || isDrawingCard) return;
+    setIsDrawingCard(true);
     setErrorToast(null);
+    soundManager.playCardDraw();
+
+    const prevOpenDeck = game.openDeck ? [...game.openDeck] : [];
+    const prevClosedCount = game.closedDeckCount;
+    const prevHandGroups = handGroups;
+    const prevMyPlayer = myPlayer;
+
+    if (source === 'open' && prevOpenDeck.length > 0) {
+      const drawnCard = prevOpenDeck[prevOpenDeck.length - 1];
+      const nextOpenDeck = prevOpenDeck.slice(0, -1);
+      // Immediately reflect open card drawn in player's hand and deck
+      setGame((prev) => (prev ? { ...prev, openDeck: nextOpenDeck, hasDrawn: true } : prev));
+      setOptimisticHasDrawn(true);
+
+      if (myPlayer) {
+        const nextCards = [...(myPlayer.cards || []), drawnCard];
+        setMyPlayer({ ...myPlayer, cards: nextCards, cardCount: nextCards.length });
+      }
+      if (handGroups.length > 0) {
+        const nextGroups = handGroups.map((grp, idx) =>
+          idx === handGroups.length - 1 ? [...grp, drawnCard] : grp
+        );
+        setHandGroups(nextGroups);
+      } else {
+        setHandGroups([[drawnCard]]);
+      }
+    } else {
+      // Immediate feedback for closed deck draw: decrement count, mark drawn
+      setOptimisticHasDrawn(true);
+      setGame((prev) => (prev ? { ...prev, closedDeckCount: Math.max(0, (prev.closedDeckCount || 1) - 1), hasDrawn: true } : prev));
+    }
+
     try {
-      soundManager.playCardDraw();
       await drawCard(game.gameId, user.uid, source);
     } catch (err: unknown) {
+      // Revert optimistic updates on error
+      setOptimisticHasDrawn(null);
+      setHandGroups(prevHandGroups);
+      setMyPlayer(prevMyPlayer);
+      setGame((prev) => (prev ? { ...prev, openDeck: prevOpenDeck, closedDeckCount: prevClosedCount, hasDrawn: false } : prev));
       setErrorToast(err instanceof Error ? err.message : String(err));
     } finally {
-      setActionLoading(false);
+      setIsDrawingCard(false);
     }
   };
 
@@ -732,6 +774,7 @@ export default function GameRoomPage() {
     // Optimistic UI update: Remove discarded card from local state immediately
     const prevHandGroups = handGroups;
     const prevMyPlayer = myPlayer;
+    const prevGame = game;
     const discardedId = cardObj.id;
 
     const optimisticGroups = handGroups
@@ -748,6 +791,14 @@ export default function GameRoomPage() {
       });
     }
 
+    // Immediately push discarded card to open pile (0ms perceived latency)
+    setGame((prev) => (prev ? {
+      ...prev,
+      openDeck: [...(prev.openDeck || []), cardObj!],
+      hasDrawn: false,
+    } : prev));
+    setOptimisticHasDrawn(false);
+
     setSelectedCardIds([]);
     soundManager.playCardDiscard();
     setActionLoading(true);
@@ -760,6 +811,8 @@ export default function GameRoomPage() {
       // Revert optimistic update on failure
       setHandGroups(prevHandGroups);
       setMyPlayer(prevMyPlayer);
+      setGame(prevGame);
+      setOptimisticHasDrawn(null);
       setErrorToast(err instanceof Error ? err.message : String(err));
     } finally {
       clearTimeout(safetyTimer);
@@ -1095,14 +1148,14 @@ export default function GameRoomPage() {
                             }
                           }}
                           onClick={() => handleDraw('closed')}
-                          className={`w-11 h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg bg-gradient-to-br from-rose-900 via-rose-800 to-amber-900 border-2 border-amber-400/50 shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all ${
+                          className={`w-10 h-14 min-[390px]:w-11 min-[390px]:h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg bg-gradient-to-br from-rose-900 via-rose-800 to-amber-900 border-2 border-amber-400/50 shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all ${
                             isMyTurn && !hasDrawn
                               ? 'ring-2 sm:ring-4 ring-amber-400 hover:scale-105 shadow-amber-500/40 animate-pulse'
                               : 'opacity-90'
                           }`}
                         >
                           <span className="text-xs sm:text-base font-black text-amber-400">♠</span>
-                          <span className="text-[8px] sm:text-[9px] font-bold text-amber-200">
+                          <span className="text-[7px] min-[390px]:text-[8px] sm:text-[9px] font-bold text-amber-200">
                             {game.closedDeckCount}
                           </span>
                         </div>
@@ -1185,7 +1238,7 @@ export default function GameRoomPage() {
                                 handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
                               }
                             }}
-                            className={`w-11 h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg border-2 border-dashed flex items-center justify-center text-[10px] sm:text-xs transition-colors ${
+                            className={`w-10 h-14 min-[390px]:w-11 min-[390px]:h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg border-2 border-dashed flex items-center justify-center text-[9px] sm:text-xs transition-colors ${
                               isMyTurn && hasDrawn
                                 ? 'border-amber-400/80 text-amber-300 cursor-pointer bg-amber-500/10'
                                 : 'border-white/20 text-slate-500'
@@ -1300,7 +1353,7 @@ export default function GameRoomPage() {
 
                   {/* Player Hand Groups Spread Across Full Width of Screen */}
                   {handGroups.length > 0 && (
-                    <div className="w-full max-w-7xl px-1 sm:px-2 flex items-end justify-center sm:justify-around gap-1.5 sm:gap-2.5 overflow-x-auto pt-3.5 pb-1 max-w-full">
+                    <div className="w-full max-w-full px-1 flex items-end justify-center gap-1 sm:gap-2 overflow-x-hidden pt-2 pb-0.5">
                       {handGroups.map((group, groupIdx) => {
                         const meldStatus = getGroupMeldStatus(group, wildJokerRank);
                         const isOver = dragOverGroupIdx === groupIdx;
@@ -1312,13 +1365,13 @@ export default function GameRoomPage() {
                             onDragOver={(e) => handleDragOverGroup(e, groupIdx)}
                             onDragLeave={() => setDragOverGroupIdx(null)}
                             onDrop={(e) => handleDropOnGroup(e, groupIdx)}
-                            className={`relative rounded-lg sm:rounded-xl p-0.5 sm:p-1 transition-all duration-200 flex flex-col items-center gap-0.5 shrink-0 ${
+                            className={`relative rounded-md sm:rounded-xl p-0.5 sm:p-1 transition-all duration-150 flex flex-col items-center gap-0.5 shrink-0 ${
                               isOver
                                 ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105'
                                 : meldStatus.type === 'set'
                                 ? meldStatus.hasJoker
                                    ? 'bg-amber-500/15 border border-amber-400 shadow shadow-amber-500/20'
-                                  : 'bg-purple-500/10 border border-purple-400/50 shadow-sm'
+                                   : 'bg-purple-500/10 border border-purple-400/50 shadow-sm'
                                 : meldStatus.type === 'pure_seq'
                                 ? 'bg-emerald-500/10 border border-emerald-500/40 shadow-sm'
                                 : meldStatus.type === 'impure_seq'
@@ -1327,34 +1380,34 @@ export default function GameRoomPage() {
                             }`}
                           >
                             {/* Group Header Badge */}
-                            <div className="flex items-center justify-between w-full px-0.5 gap-0.5 text-[7px] sm:text-[8px] font-bold">
+                            <div className="flex items-center justify-between w-full px-0.5 gap-0.5 text-[6px] min-[390px]:text-[7px] sm:text-[8px] font-bold">
                               <span className="text-slate-400 font-mono">G{groupIdx + 1}</span>
                               {meldStatus.type === 'set' ? (
                                 meldStatus.hasJoker ? (
-                                  <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black text-[7px] sm:text-[8px] shadow flex items-center gap-0.5">
-                                    ⭐ SET (3)
+                                  <span className="px-1 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black shadow flex items-center gap-0.5">
+                                    ⭐ SET
                                   </span>
                                 ) : (
-                                  <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[7px] sm:text-[8px] font-black">
-                                    ✓ SET (3)
+                                  <span className="px-1 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black">
+                                    ✓ SET
                                   </span>
                                 )
                               ) : meldStatus.type === 'pure_seq' ? (
-                                <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[7px] sm:text-[8px] font-black">
-                                  ✓ PURE SEQ
+                                <span className="px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-black">
+                                  ✓ PURE
                                 </span>
                               ) : meldStatus.type === 'impure_seq' ? (
-                                <span className="px-1.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[7px] sm:text-[8px] font-black">
-                                  ⭐ JOKER SEQ
+                                <span className="px-1 py-0.2 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 font-black">
+                                  ⭐ JOKER
                                 </span>
                               ) : (
-                                <span className="text-slate-400 text-[7px]">Hand ({group.length})</span>
+                                <span className="text-slate-400">({group.length})</span>
                               )}
                               {handGroups.length > 1 && (
                                 <button
                                   type="button"
                                   onClick={() => handleUngroup(groupIdx)}
-                                  className="text-slate-500 hover:text-rose-400 text-[7px] transition-colors ml-0.5 cursor-pointer"
+                                  className="text-slate-500 hover:text-rose-400 text-[6px] min-[390px]:text-[7px] transition-colors ml-0.5 cursor-pointer"
                                   title={`Ungroup group ${groupIdx + 1}`}
                                   aria-label={`Ungroup group ${groupIdx + 1}`}
                                 >
@@ -1364,9 +1417,8 @@ export default function GameRoomPage() {
                             </div>
 
                             {/* Cards in Group Spread Horizontally */}
-                            <div className="flex items-center -space-x-3 min-[400px]:-space-x-2.5 sm:-space-x-1.5 md:space-x-0.5 overflow-visible px-0.5 py-0.5">
+                            <div className="flex items-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] overflow-visible px-0.5 py-0.5">
                               {group.map((card, cardIdx) => {
-                                const isWild = card.rank === wildJokerRank;
                                 const isSelected = selectedCardIds.includes(card.id);
 
                                 return (
@@ -1382,11 +1434,6 @@ export default function GameRoomPage() {
                                     onTouchMove={handleTouchMoveCard}
                                     onTouchEnd={handleTouchEndCard}
                                   >
-                                    {isWild && (
-                                      <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-1 py-0.5 rounded shadow pointer-events-none">
-                                        ★
-                                      </span>
-                                    )}
                                     <PlayingCard
                                       card={card}
                                       wildJokerRank={wildJokerRank}
@@ -1402,28 +1449,29 @@ export default function GameRoomPage() {
                         );
                       })}
 
-                      {/* Drop Target to Create New Side Group */}
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        aria-label="Create new card group"
-                        data-drop-group={-1}
-                        onDragOver={(e) => handleDragOverGroup(e, -1)}
-                        onDrop={(e) => handleDropOnGroup(e, -1)}
-                        className="rounded-lg border border-dashed border-white/20 hover:border-amber-400/60 p-1 flex flex-col items-center justify-center text-[8px] sm:text-[9px] text-slate-500 hover:text-amber-300 cursor-pointer h-19 min-[400px]:h-21 sm:h-24 md:h-27 shrink-0 transition-colors"
-                        title="Drag and drop card here to place as new group"
-                      >
-                        <span className="text-sm font-bold">+</span>
-                        <span>Group</span>
-                      </div>
+                      {/* Drop Target to Create New Side Group (Compact on mobile) */}
+                      {handGroups.length < 5 && (
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Create new card group"
+                          data-drop-group={-1}
+                          onDragOver={(e) => handleDragOverGroup(e, -1)}
+                          onDrop={(e) => handleDropOnGroup(e, -1)}
+                          className="rounded-md sm:rounded-lg border border-dashed border-white/20 hover:border-amber-400/60 p-0.5 flex flex-col items-center justify-center text-[7px] sm:text-[8px] text-slate-500 hover:text-amber-300 cursor-pointer w-6 min-[390px]:w-7 sm:w-8 h-[58px] min-[390px]:h-[64px] min-[420px]:h-[70px] sm:h-[82px] md:h-[94px] shrink-0 transition-colors"
+                          title="Drag and drop card here to place as new group"
+                        >
+                          <span className="text-xs font-bold leading-none">+</span>
+                          <span className="text-[6px] min-[390px]:text-[7px]">Grp</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Fallback Single Flat Hand if handGroups empty */}
                   {handGroups.length === 0 && myPlayer?.cards && myPlayer.cards.length > 0 && (
-                    <div className="flex items-center justify-center -space-x-3.5 min-[400px]:-space-x-3 sm:-space-x-2 md:-space-x-1 max-w-full overflow-x-auto pt-3.5 pb-1 px-2">
+                    <div className="flex items-center justify-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] max-w-full overflow-x-hidden pt-2 pb-0.5 px-1">
                       {myPlayer.cards.map((card, cardIdx) => {
-                        const isWild = card.rank === wildJokerRank;
                         const isSelected = selectedCardIds.includes(card.id);
                         return (
                           <div
@@ -1433,11 +1481,6 @@ export default function GameRoomPage() {
                               zIndex: isSelected ? 40 : cardIdx + 1,
                             }}
                           >
-                            {isWild && (
-                              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-20 bg-amber-400 text-black font-black text-[6px] sm:text-[7px] px-1 py-0.5 rounded shadow pointer-events-none">
-                                ★
-                              </span>
-                            )}
                             <PlayingCard
                               card={card}
                               wildJokerRank={wildJokerRank}
@@ -1461,18 +1504,21 @@ export default function GameRoomPage() {
                     );
 
                     return (
-                      <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-0.5 shrink-0 z-40 my-0.5 px-1">
+                      <div
+                        data-testid="persistent-action-dock"
+                        className="w-full max-w-2xl mx-auto flex flex-col items-center gap-1 shrink-0 z-40 mt-0.5 px-1"
+                      >
                         {/* Live Status Line: Hand summary & Penalty Score */}
-                        <div className="flex items-center justify-between w-full px-1 text-[8px] sm:text-[9px] leading-tight mb-0.5">
+                        <div className="flex items-center justify-between w-full px-1 text-[8px] sm:text-[9px] leading-tight">
                           {/* Live Hand Cards Count & Groups */}
                           <div
-                            className="py-0.5 px-2 rounded-full bg-black/70 border border-white/10 flex items-center gap-1.5 font-bold text-slate-300"
+                            className="py-0.5 px-2 rounded-full bg-black/80 border border-white/10 flex items-center gap-1 font-bold text-slate-300"
                             title="Cards in hand and group count"
                           >
                             <span className="text-amber-400 font-mono">♠</span>
                             <span>Hand: <strong className="text-white font-mono">{myPlayer?.cards?.length || 13} Cards</strong></span>
                             {handGroups.length > 1 && (
-                              <span className="text-slate-400 text-[7px] sm:text-[8px] font-normal font-mono">({handGroups.length} Groups)</span>
+                              <span className="text-slate-400 text-[7px] sm:text-[8px] font-mono">({handGroups.length} Grps)</span>
                             )}
                           </div>
 
@@ -1489,49 +1535,19 @@ export default function GameRoomPage() {
                           </div>
                         </div>
 
-                        {/* 4 Primary Player Action Buttons: DROP | SORT | DISCARD | DECLARE */}
-                        <div className="w-full grid grid-cols-4 gap-1 sm:gap-1.5 bg-black/95 backdrop-blur-md p-1 rounded-lg sm:rounded-xl border border-amber-500/40 shadow-xl shrink-0 z-40">
-                          {/* 1. DROP BUTTON */}
+                        {/* 4 Primary Player Action Buttons: DISCARD | DECLARE | SORT | DROP */}
+                        <div className="w-full grid grid-cols-4 gap-1 sm:gap-1.5 bg-[#0b0d14]/95 backdrop-blur-md p-1 rounded-lg sm:rounded-xl border border-amber-500/40 shadow-xl shrink-0 z-40">
+                          {/* 1. DISCARD BUTTON */}
                           <button
                             type="button"
-                            onClick={() => setShowDropModal(true)}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className="h-8 sm:h-9 px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-rose-600/30 to-rose-900/40 hover:from-rose-600/50 hover:to-rose-800/60 border border-rose-500/60 text-rose-200 font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
-                            title="Drop hand"
-                            aria-label="Drop hand"
-                          >
-                            <span className="tracking-wide">DROP</span>
-                            <span className="text-[7px] sm:text-[8px] font-mono font-semibold text-rose-300 mt-0.5">
-                              -₹{dropInfo.penaltyRupees}
-                            </span>
-                          </button>
-
-                          {/* 2. SORT BUTTON */}
-                          <button
-                            type="button"
-                            onClick={handleAutoSortHand}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className="h-8 sm:h-9 px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-purple-600/30 to-purple-900/40 hover:from-purple-600/50 hover:to-purple-800/60 border border-purple-500/60 text-purple-200 font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40"
-                            title="Sort cards into sequences and sets"
-                            aria-label="Sort cards into sequences and sets"
-                          >
-                            <div className="flex items-center gap-0.5">
-                              <ArrowUpDown className="w-2.5 h-2.5 text-amber-400" />
-                              <span className="tracking-wide">SORT</span>
-                            </div>
-                            <span className="text-[7px] text-purple-300/80 mt-0.5">Suits</span>
-                          </button>
-
-                          {/* 3. DISCARD BUTTON */}
-                          <button
-                            type="button"
+                            data-testid="dock-btn-discard"
                             onClick={() => handleDiscard()}
                             disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className={`h-8 sm:h-9 px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none ${
+                            className={`min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none select-none ${
                               isMyTurn && hasDrawn && selectedCardIds.length > 0
                                 ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
                                 : isMyTurn && hasDrawn
-                                ? 'bg-gradient-to-r from-amber-600/40 to-yellow-600/40 border border-amber-400 text-amber-200 cursor-pointer animate-pulse'
+                                ? 'bg-gradient-to-r from-amber-600/50 to-yellow-600/50 border border-amber-400 text-amber-200 cursor-pointer animate-pulse'
                                 : isMyTurn
                                 ? 'bg-white/15 hover:bg-white/20 text-white border border-white/20 cursor-pointer'
                                 : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
@@ -1547,8 +1563,11 @@ export default function GameRoomPage() {
                                 : 'Discard selected card'
                             }
                           >
-                            <span className="tracking-wide">DISCARD</span>
-                            <span className="text-[7px] mt-0.5 truncate max-w-full font-medium">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs sm:text-sm">🗑️</span>
+                              <span className="tracking-wide">DISCARD</span>
+                            </div>
+                            <span className="text-[7px] sm:text-[8px] mt-0.5 truncate max-w-full font-medium">
                               {isMyTurn
                                 ? !hasDrawn
                                   ? 'Draw 1st'
@@ -1559,21 +1578,58 @@ export default function GameRoomPage() {
                             </span>
                           </button>
 
-                          {/* 4. DECLARE / SHOW BUTTON */}
+                          {/* 2. DECLARE / SHOW BUTTON */}
                           <button
                             type="button"
+                            data-testid="dock-btn-declare"
                             onClick={handleOpenDeclare}
                             disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className={`h-8 sm:h-9 px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow transition-all active:scale-95 flex flex-col items-center justify-center leading-none ${
+                            className={`min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none select-none ${
                               isMyTurn
-                                ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 text-black cursor-pointer shadow-emerald-500/40 ring-1 ring-emerald-300'
+                                ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-black cursor-pointer shadow-emerald-500/40 ring-1 ring-emerald-300'
                                 : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
                             }`}
                             aria-label="Declare hand show"
                             title="Declare Hand Show"
                           >
-                            <span className="tracking-wide">DECLARE</span>
-                            <span className="text-[7px] text-emerald-950 font-bold mt-0.5">Show Hand</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs sm:text-sm">🏆</span>
+                              <span className="tracking-wide">DECLARE</span>
+                            </div>
+                            <span className="text-[7px] sm:text-[8px] text-emerald-950 font-bold mt-0.5">Show Hand</span>
+                          </button>
+
+                          {/* 3. SORT BUTTON */}
+                          <button
+                            type="button"
+                            data-testid="dock-btn-sort"
+                            onClick={handleAutoSortHand}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className="min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-purple-700/40 to-indigo-900/50 hover:from-purple-600/60 hover:to-indigo-800/70 border border-purple-500/60 text-purple-200 font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40 select-none"
+                            title="Sort cards into sequences and sets"
+                            aria-label="Sort cards into sequences and sets"
+                          >
+                            <div className="flex items-center gap-1">
+                              <ArrowUpDown className="w-3 h-3 text-amber-400" />
+                              <span className="tracking-wide">SORT</span>
+                            </div>
+                            <span className="text-[7px] sm:text-[8px] text-purple-300/80 mt-0.5">Suits</span>
+                          </button>
+
+                          {/* 4. DROP BUTTON */}
+                          <button
+                            type="button"
+                            data-testid="dock-btn-drop"
+                            onClick={() => setShowDropModal(true)}
+                            disabled={actionLoading || myPlayer?.status === 'dropped'}
+                            className="min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-rose-800/40 to-red-950/60 hover:from-rose-700/60 hover:to-red-900/80 border border-rose-500/60 text-rose-200 font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40 select-none"
+                            title="Drop hand"
+                            aria-label="Drop hand"
+                          >
+                            <span className="tracking-wide">DROP</span>
+                            <span className="text-[7px] sm:text-[8px] font-mono font-semibold text-rose-300 mt-0.5">
+                              -₹{dropInfo.penaltyRupees}
+                            </span>
                           </button>
                         </div>
                       </div>

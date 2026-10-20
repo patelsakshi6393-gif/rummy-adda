@@ -13,3 +13,4 @@ www/
 .gradle/
 bun.lock.bak
 *.tsbuildinfo
+.agents/

@@ -1073,10 +1073,6 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
   const playerRef = doc(db, 'games', gameId, 'players', playerUid);
   const playersRef = collection(db, 'games', gameId, 'players');
 
-  // Discover all players in this game to ensure no seated player is missed
-  const playersSnap = await getDocs(playersRef);
-  const discoveredUids = playersSnap.docs.map((d) => d.id);
-
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
     const gameSnap = await tx.get(gameRef);
@@ -1094,10 +1090,10 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
     const hasPlayerDrawn = Boolean(gameData.hasDrawn) || currentHand.length >= 14;
     if (!hasPlayerDrawn) throw new Error('You must draw a card before discarding.');
 
-    // Read ALL player docs inside the transaction for consistency
+    // Read ALL active player docs inside the transaction for consistency
     const allPlayerUids = Array.from(new Set([
       ...(gameData.playerUids || []),
-      ...discoveredUids,
+      playerUid,
     ]));
 
     const playerSnaps = await Promise.all(
@@ -1231,11 +1227,6 @@ export async function playBotTurn(gameId: string, botUid: string): Promise<void>
   const gameRef = doc(db, 'games', gameId);
   const botRef = doc(db, 'games', gameId, 'players', botUid);
   const secretDeckRef = doc(db, 'games', gameId, 'internal', 'deck');
-  const playersRef = collection(db, 'games', gameId, 'players');
-
-  // Discover all players in this game
-  const playersSnap = await getDocs(playersRef);
-  const discoveredUids = playersSnap.docs.map((d) => d.id);
 
   await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
@@ -1254,7 +1245,6 @@ export async function playBotTurn(gameId: string, botUid: string): Promise<void>
     // Read other players to determine next player after bot
     const allPlayerUids = Array.from(new Set([
       ...(gameData.playerUids || []),
-      ...discoveredUids,
       botUid,
     ]));
 
