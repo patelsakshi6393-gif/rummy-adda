@@ -143,6 +143,25 @@ export async function findMatch(
   for (const gDoc of activeGamesSnap.docs) {
     const gData = gDoc.data() as GameState;
     if (Array.isArray(gData.playerUids) && gData.playerUids.includes(currentUid)) {
+      // 1. If player is listed in droppedUids on the game, DO NOT reconnect
+      if (Array.isArray(gData.droppedUids) && gData.droppedUids.includes(currentUid)) {
+        continue;
+      }
+      // 2. Fetch the player subdocument to check current status
+      try {
+        const pRef = doc(db, 'games', gDoc.id, 'players', currentUid);
+        const pSnap = await getDoc(pRef);
+        if (pSnap.exists()) {
+          const pData = pSnap.data() as GamePlayerState;
+          if (pData.status === 'dropped' || pData.status === 'eliminated') {
+            continue; // Dropped/eliminated player must not be reconnected
+          }
+        } else {
+          continue; // Not active in players subcollection
+        }
+      } catch (err) {
+        console.warn('Player status verification error:', err);
+      }
       return gDoc.id; // Reconnect user to their live playing match
     }
   }
@@ -172,6 +191,9 @@ export async function findMatch(
     const isFresh = now - lastActiveTime < 90000;
 
     if (isAlreadySeated) {
+      if (Array.isArray(gData.droppedUids) && gData.droppedUids.includes(currentUid)) {
+        continue;
+      }
       myExistingWaitingGameId = gDoc.id;
     } else if (isFresh && (gData.playerCount || 0) < 6) {
       targetGameId = gDoc.id;
@@ -196,7 +218,10 @@ export async function findMatch(
       const pRef = doc(db, 'games', gameId, 'players', currentUid);
       const existingPSnap = await tx.get(pRef);
       if (existingPSnap.exists()) {
-        return; // Already seated in this match
+        const pData = existingPSnap.data() as GamePlayerState;
+        if (pData.status !== 'dropped' && pData.status !== 'eliminated') {
+          return; // Already actively seated in this match
+        }
       }
 
       if ((gData.playerCount || 0) >= 6 || (gData.status !== 'WAITING' && gData.status !== 'COUNTDOWN')) {
@@ -581,8 +606,11 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
 
     // Existing active game session: check if user is already seated
     if (existingPlayerSnap && existingPlayerSnap.exists()) {
-      // Re-joining already seated game
-      return gameId;
+      const pData = existingPlayerSnap.data() as GamePlayerState;
+      if (pData.status !== 'dropped' && pData.status !== 'eliminated') {
+        // Re-joining already seated active game
+        return gameId;
+      }
     }
 
     // Check maximum players
@@ -1478,6 +1506,15 @@ export async function settleLoserLoss(
   const finalLossAmount = Math.max(1, calculatedLoss);
 
   try {
+    const playerDocRef = doc(db, 'games', gameId, 'players', loserUid);
+    const pSnap = await getDoc(playerDocRef);
+    if (pSnap.exists()) {
+      const pData = pSnap.data() as GamePlayerState;
+      if (pData.isSettled) {
+        return finalLossAmount; // Already settled, avoid double refund or penalty
+      }
+    }
+
     const loserWalletRef = doc(db, 'wallets', loserUid);
     const wSnap = await getDoc(loserWalletRef);
     if (!wSnap.exists()) return finalLossAmount;
@@ -1533,6 +1570,13 @@ export async function settleLoserLoss(
       referenceId: gameId,
       createdAt: new Date().toISOString(),
     });
+
+    if (pSnap.exists()) {
+      await updateDoc(playerDocRef, {
+        isSettled: true,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     return finalLossAmount;
   } catch (err) {
@@ -1658,6 +1702,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
       dropPenaltyRupees,
       isFirstDrop,
       missedTurns: currentMissed + 1,
+      droppedAt: new Date().toISOString(),
     });
 
     const remainingActive = allPlayers
@@ -1699,6 +1744,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
           status: 'RESULT',
           phase: 'RESULT',
           winnerUid: winner.uid,
+          droppedUids: Array.from(new Set([...(game.droppedUids || []), currentTurnUid])),
           resultData: {
             winnerUid: winner.uid,
             scores,
@@ -1732,6 +1778,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
         tx.update(gameRef, {
           status: 'RESULT',
           phase: 'RESULT',
+          droppedUids: Array.from(new Set([...(game.droppedUids || []), currentTurnUid])),
           updatedAt: new Date().toISOString(),
         });
         return null;
@@ -1741,6 +1788,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
       const nextClockwise = remainingActive.find((p) => (p.seatIndex || 0) > currentSeat);
       const nextUid = nextClockwise ? nextClockwise.uid : remainingActive[0].uid;
       tx.update(gameRef, {
+        droppedUids: Array.from(new Set([...(game.droppedUids || []), currentTurnUid])),
         turnUid: nextUid,
         turnStartedAt: now,
         turnDeadline: now + 60000,
@@ -1785,6 +1833,31 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
       }
     } catch (e) {
       console.warn('Error settling timeout losses:', e);
+    }
+  } else {
+    // Game is still ongoing, settle the auto-dropped player immediately so they can start new games
+    try {
+      const pSnap = await getDoc(playerRef);
+      const gSnap = await getDoc(gameRef);
+      if (pSnap.exists() && gSnap.exists()) {
+        const pData = pSnap.data() as GamePlayerState;
+        const gData = gSnap.data() as GameState;
+        if (!pData.isSettled) {
+          const dropPts = pData.score || 40;
+          await settleLoserLoss(
+            gameId,
+            gData.mode,
+            currentTurnUid,
+            dropPts,
+            gData.pointValue || ((gData.entryFee || 20) / 80),
+            gData.entryFee || 20,
+            pData.entryPaid || (gData.entryFee || 20),
+            pData.deductionBreakdown
+          );
+        }
+      }
+    } catch (settleErr) {
+      console.warn('Auto-drop immediate settlement note:', settleErr);
     }
   }
 }
@@ -1857,11 +1930,14 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       dropPenalty: penalty,
       dropPenaltyRupees,
       isFirstDrop: dropInfo.isFirstDrop,
+      droppedAt: new Date().toISOString(),
     });
 
     const remainingActive = allPlayers
       .filter((p) => p.uid !== playerUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
       .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
+
+    const updatedDroppedUids = Array.from(new Set([...(game.droppedUids || []), playerUid]));
 
     if (remainingActive.length <= 1) {
       const winner = remainingActive[0];
@@ -1899,6 +1975,7 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
           status: 'RESULT',
           phase: 'RESULT',
           winnerUid: winner.uid,
+          droppedUids: updatedDroppedUids,
           resultData: {
             winnerUid: winner.uid,
             scores,
@@ -1932,26 +2009,30 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
         tx.update(gameRef, {
           status: 'RESULT',
           phase: 'RESULT',
+          droppedUids: updatedDroppedUids,
           updatedAt: new Date().toISOString(),
         });
         return null;
       }
-    } else if (game.turnUid === playerUid) {
-      const currentSeat = playerData.seatIndex || 0;
-      const nextClockwise = remainingActive.find((p) => (p.seatIndex || 0) > currentSeat);
-      const nextUid = nextClockwise ? nextClockwise.uid : remainingActive[0].uid;
-      const now = Date.now();
-      tx.update(gameRef, {
-        turnUid: nextUid,
-        turnStartedAt: now,
-        turnDeadline: now + 60000,
-        turnExtensionCount: 0,
-        hasDrawn: false,
+    } else {
+      const gameUpdates: Record<string, unknown> = {
+        droppedUids: updatedDroppedUids,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      if (game.turnUid === playerUid) {
+        const currentSeat = playerData.seatIndex || 0;
+        const nextClockwise = remainingActive.find((p) => (p.seatIndex || 0) > currentSeat);
+        const nextUid = nextClockwise ? nextClockwise.uid : remainingActive[0].uid;
+        const now = Date.now();
+        gameUpdates.turnUid = nextUid;
+        gameUpdates.turnStartedAt = now;
+        gameUpdates.turnDeadline = now + 60000;
+        gameUpdates.turnExtensionCount = 0;
+        gameUpdates.hasDrawn = false;
+      }
+      tx.update(gameRef, gameUpdates);
       return null;
     }
-    return null;
   });
 
   if (winnerToCredit) {
@@ -1968,8 +2049,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
     );
 
     try {
-      const pSnap = await getDocs(playersRef);
-      for (const d of pSnap.docs) {
+      const pSnap2 = await getDocs(playersRef);
+      for (const d of pSnap2.docs) {
         const pData = d.data() as GamePlayerState;
         if (pData.uid !== winnerToCredit.winnerUid && !pData.isBot) {
           const lossPts = pData.score || 20;
@@ -1990,29 +2071,26 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
     }
   } else {
     // Multi-player match: drop occurred but match continues with other players.
-    // Settle this dropping player's loss immediately!
-    const dropInfo = calculateDropPenalty(
-      pSnap.docs.length > 0 ? 20 : 20,
-      0.25,
-      0,
-      false
-    );
+    // Settle this dropping player's loss and refund remaining buy-in immediately!
     try {
-      const gSnap = await getDoc(gameRef);
-      const gData = gSnap.data() as GameState;
-      const pData = pSnap.docs.find((d) => d.id === playerUid)?.data() as GamePlayerState;
-      if (gData && pData) {
-        const pLoss = pData.score || 20;
-        await settleLoserLoss(
-          gameId,
-          gData.mode,
-          playerUid,
-          pLoss,
-          gData.pointValue || (gData.entryFee / 80),
-          gData.entryFee,
-          pData.entryPaid || gData.entryFee,
-          pData.deductionBreakdown
-        );
+      const freshPSnap = await getDoc(playerRef);
+      const freshGSnap = await getDoc(gameRef);
+      if (freshPSnap.exists() && freshGSnap.exists()) {
+        const pData = freshPSnap.data() as GamePlayerState;
+        const gData = freshGSnap.data() as GameState;
+        if (!pData.isSettled) {
+          const pLoss = pData.score || 20;
+          await settleLoserLoss(
+            gameId,
+            gData.mode,
+            playerUid,
+            pLoss,
+            gData.pointValue || (gData.entryFee / 80),
+            gData.entryFee,
+            pData.entryPaid || gData.entryFee,
+            pData.deductionBreakdown
+          );
+        }
       }
     } catch (e) {
       console.warn('Error settling interim drop loss:', e);
@@ -2175,7 +2253,17 @@ export async function declareHand(
       dropPenalty: 80,
       dropPenaltyRupees: game.entryFee || 20,
       status: 'dropped',
+      droppedAt: new Date().toISOString(),
     });
+
+    try {
+      await updateDoc(gameRef, {
+        droppedUids: Array.from(new Set([...(game.droppedUids || []), playerUid])),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('Invalid declaration droppedUids update:', e);
+    }
 
     return validation;
   }

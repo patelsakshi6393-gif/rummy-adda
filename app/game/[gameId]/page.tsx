@@ -71,6 +71,7 @@ import {
   HelpCircle,
   Smartphone,
   Bot,
+  Play,
 } from 'lucide-react';
 import { HowToPlayModal } from '@/components/HowToPlayModal';
 
@@ -1946,8 +1947,14 @@ export default function GameRoomPage() {
               </p>
               <div className="pt-2 flex flex-col gap-2">
                 <Link
+                  href={`/match/stakes?format=${game?.mode || 'points'}`}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-black text-xs uppercase shadow-lg shadow-emerald-500/30 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Play className="w-4 h-4 fill-current" /> Play New Match
+                </Link>
+                <Link
                   href="/lobby"
-                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-xs uppercase shadow-lg shadow-amber-500/30 transition-all flex items-center justify-center gap-1.5"
+                  className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase transition-all flex items-center justify-center gap-1.5"
                 >
                   <ArrowLeft className="w-4 h-4" /> Return to Lobby
                 </Link>

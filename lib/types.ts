@@ -159,6 +159,8 @@ export interface GamePlayerState {
   turnsCount?: number;
   missedTurns?: number;
   entryPaid?: number;
+  isSettled?: boolean;
+  droppedAt?: string;
   deductionBreakdown?: {
     depositDeduct: number;
     bonusDeduct?: number;
@@ -175,6 +177,7 @@ export interface GameState {
   entryFee: number;
   playerCount: number;
   playerUids?: string[];
+  droppedUids?: string[];
   status: GameStatus;
   phase: GameStatus;
   countdownEndsAt?: string;
