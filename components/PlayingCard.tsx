@@ -56,11 +56,20 @@ function PlayingCardInner({
     lg: 'w-20 h-28 sm:w-22 sm:h-32 md:w-24 md:h-36 text-base sm:text-lg rounded-xl',
   };
 
+  const onClickRef = React.useRef(onClick);
+  onClickRef.current = onClick;
+
+  const handleClick = React.useCallback(() => {
+    if (!disabled && onClickRef.current) {
+      onClickRef.current();
+    }
+  }, [disabled]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      onClick?.();
+      handleClick();
     }
   };
 
@@ -72,7 +81,7 @@ function PlayingCardInner({
       aria-pressed={isSelected ? true : undefined}
       aria-disabled={disabled ? true : undefined}
       onKeyDown={handleKeyDown}
-      onClick={disabled ? undefined : onClick}
+      onClick={disabled ? undefined : handleClick}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -85,20 +94,29 @@ function PlayingCardInner({
         ${isSelected ? '-translate-y-3 ring-2 ring-amber-400 shadow-xl shadow-amber-500/30' : 'hover:-translate-y-1 shadow-sm hover:shadow-md'}
         ${disabled ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : ''}
         bg-gradient-to-b from-amber-50 via-white to-slate-100 border border-slate-300
-        flex flex-col justify-between p-0.5 min-[390px]:p-1 sm:p-1.5 font-semibold text-slate-900
+        flex flex-col justify-between p-0.5 min-[390px]:p-1 sm:p-1.5 font-semibold text-slate-900 active:scale-95
         ${className}
       `}
       style={{
+        touchAction: 'manipulation',
+        WebkitTapHighlightColor: 'transparent',
         zIndex: isSelected ? 40 : undefined,
         boxShadow: isSelected
           ? '0 8px 16px -2px rgba(245, 158, 11, 0.4), 0 3px 5px -1px rgba(0, 0, 0, 0.2)'
           : '0 2px 5px rgba(0,0,0,0.25)',
       }}
     >
-      {/* Wild Joker Badge - anchored at top-left to avoid overlap obstruction */}
+      {/* Wild Joker Badge - anchored at top-left */}
       {isWild && (
         <div className="absolute -top-1.5 left-0.5 z-20 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[6px] min-[390px]:text-[7px] sm:text-[8px] px-1 py-0.2 rounded shadow border border-amber-300 flex items-center gap-0.5 pointer-events-none">
           <span>★</span> JOKER
+        </div>
+      )}
+
+      {/* Wild Joker Mini Emblem at bottom center (like in official screenshot) */}
+      {isWild && !isJoker && (
+        <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex items-center justify-center">
+          <span className="text-[10px] min-[390px]:text-xs leading-none drop-shadow">🃏</span>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
@@ -14,7 +14,10 @@ import {
   Sparkles,
   Users,
 } from 'lucide-react';
-import { GameMode } from '@/lib/types';
+import { GameMode, GameState } from '@/lib/types';
+import { clearActiveGameSession } from '@/lib/game-service';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 export default function LobbyPage() {
   const router = useRouter();
@@ -24,6 +27,33 @@ export default function LobbyPage() {
   const winBal = wallet?.winBalance || 0;
   const bonusBal = wallet?.bonusBalance || 0;
   const totalPlayable = (depositBal || 0) + (winBal || 0) + (bonusBal || 0);
+
+  // If user returns to lobby after dropping, ensure any lingering dropped session pointer is cleared
+  useEffect(() => {
+    if (user && typeof window !== 'undefined') {
+      try {
+        const storedGameId = localStorage.getItem('rummy_active_game_id') || localStorage.getItem('activeGameId');
+        if (storedGameId) {
+          getDoc(doc(db, 'games', storedGameId)).then((gSnap) => {
+            if (gSnap.exists()) {
+              const gData = gSnap.data() as GameState;
+              const isDropped = Array.isArray(gData.droppedUids) && gData.droppedUids.includes(user.uid);
+              const isFinished = gData.status === 'RESULT' || gData.status === 'COMPLETED';
+              if (isDropped || isFinished) {
+                clearActiveGameSession(user.uid, storedGameId);
+              }
+            } else {
+              clearActiveGameSession(user.uid);
+            }
+          }).catch(() => {
+            clearActiveGameSession(user.uid);
+          });
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+  }, [user]);
 
   const handleSelectFormat = (format: GameMode) => {
     router.push(`/match/stakes?format=${format}`);

@@ -94,6 +94,90 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
 };
 
 /**
+ * Clear any active game session pointer for a player in user document and localStorage
+ */
+export async function clearActiveGameSession(playerUid: string, gameId?: string): Promise<void> {
+  if (!playerUid) return;
+  try {
+    const userRef = doc(db, 'users', playerUid);
+    await updateDoc(userRef, {
+      activeGameId: null,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Error clearing activeGameId on user doc:', err);
+  }
+
+  // Clear in localStorage if in browser environment
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.removeItem('rummy_active_game_id');
+      localStorage.removeItem('activeGameId');
+    } catch {
+      // localStorage may fail in restricted/private modes
+    }
+  }
+
+  if (gameId) {
+    try {
+      const gRef = doc(db, 'games', gameId);
+      const gSnap = await getDoc(gRef);
+      if (gSnap.exists()) {
+        const gData = gSnap.data() as GameState;
+        const currentDropped = Array.isArray(gData.droppedUids) ? gData.droppedUids : [];
+        if (!currentDropped.includes(playerUid)) {
+          await updateDoc(gRef, {
+            droppedUids: [...currentDropped, playerUid],
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Error marking droppedUids in clearActiveGameSession:', err);
+    }
+  }
+}
+
+/**
+ * Record active game session pointer for a player in user document and localStorage
+ */
+export async function setActiveGameSession(playerUid: string, gameId: string): Promise<void> {
+  if (!playerUid || !gameId) return;
+  try {
+    const userRef = doc(db, 'users', playerUid);
+    await updateDoc(userRef, {
+      activeGameId: gameId,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Error setting activeGameId on user doc:', err);
+  }
+
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.setItem('rummy_active_game_id', gameId);
+      localStorage.setItem('activeGameId', gameId);
+    } catch {
+      // localStorage may fail
+    }
+  }
+}
+
+/**
+ * Retrieve the current active game session ID for a player, if any
+ */
+export function getActiveGameSession(): string | null {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      return localStorage.getItem('rummy_active_game_id') || localStorage.getItem('activeGameId') || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Matchmaking: Find an existing open table for this format & stake or create a real waiting queue.
  * Zero bots policy: Matches only genuine authenticated players online.
  */
@@ -137,7 +221,7 @@ export async function findMatch(
   const activeGamesSnap = await getDocs(
     query(
       collection(db, 'games'),
-      where('status', 'in', ['PLAYING', 'TOSS', 'DEAL'])
+      where('status', 'in', ['PLAYING', 'TOSS', 'DEAL', 'DECLARE'])
     )
   );
   for (const gDoc of activeGamesSnap.docs) {
@@ -147,6 +231,14 @@ export async function findMatch(
       if (Array.isArray(gData.droppedUids) && gData.droppedUids.includes(currentUid)) {
         continue;
       }
+
+      // Check freshness: table must have activity within last 2 minutes
+      const lastActiveTime = new Date(gData.updatedAt || gData.createdAt || 0).getTime();
+      const isFresh = Date.now() - lastActiveTime < 120000;
+      if (!isFresh) {
+        continue; // Stale abandoned match, do not reconnect
+      }
+
       // 2. Fetch the player subdocument to check current status
       try {
         const pRef = doc(db, 'games', gDoc.id, 'players', currentUid);
@@ -156,13 +248,15 @@ export async function findMatch(
           if (pData.status === 'dropped' || pData.status === 'eliminated') {
             continue; // Dropped/eliminated player must not be reconnected
           }
-        } else {
-          continue; // Not active in players subcollection
+          // Player is genuinely actively playing in this match!
+          await setActiveGameSession(currentUid, gDoc.id);
+          return gDoc.id; // Reconnect user to their live playing match
         }
       } catch (err) {
         console.warn('Player status verification error:', err);
       }
-      return gDoc.id; // Reconnect user to their live playing match
+      // If verification failed or status was not actively playing, do NOT reconnect
+      continue;
     }
   }
 
@@ -190,12 +284,28 @@ export async function findMatch(
     const lastActiveTime = new Date(gData.updatedAt || gData.createdAt || 0).getTime();
     const isFresh = now - lastActiveTime < 90000;
 
+    if (!isFresh) {
+      continue; // Skip any stale waiting room
+    }
+
     if (isAlreadySeated) {
       if (Array.isArray(gData.droppedUids) && gData.droppedUids.includes(currentUid)) {
         continue;
       }
-      myExistingWaitingGameId = gDoc.id;
-    } else if (isFresh && (gData.playerCount || 0) < 6) {
+      try {
+        const pRef = doc(db, 'games', gDoc.id, 'players', currentUid);
+        const pSnap = await getDoc(pRef);
+        if (pSnap.exists()) {
+          const pData = pSnap.data() as GamePlayerState;
+          if (pData.status === 'dropped' || pData.status === 'eliminated') {
+            continue;
+          }
+          myExistingWaitingGameId = gDoc.id;
+        }
+      } catch {
+        // Skip unverified
+      }
+    } else if ((gData.playerCount || 0) < 6) {
       targetGameId = gDoc.id;
       break;
     }
@@ -203,6 +313,7 @@ export async function findMatch(
 
   // If user already has an active fresh waiting room for this mode & stake, reconnect without double charge
   if (!targetGameId && myExistingWaitingGameId) {
+    await setActiveGameSession(currentUid, myExistingWaitingGameId);
     return myExistingWaitingGameId;
   }
 
@@ -293,6 +404,7 @@ export async function findMatch(
       createdAt: new Date().toISOString(),
     });
 
+    await setActiveGameSession(currentUid, gameId);
     return gameId;
   } else {
     // Create new match session with honest waiting state
@@ -358,6 +470,7 @@ export async function findMatch(
       createdAt: new Date().toISOString(),
     });
 
+    await setActiveGameSession(currentUid, gameId);
     return gameId;
   }
 }
@@ -452,6 +565,7 @@ export async function leaveMatchQueue(
     });
   }
 
+  await clearActiveGameSession(playerUid, gameId);
   return { refunded: refundAmount > 0, refundAmount };
 }
 
@@ -499,7 +613,7 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
   const tableRef = doc(db, 'gameTables', tableId);
   const walletRef = doc(db, 'wallets', profile.uid);
 
-  return await runTransaction(db, async (tx) => {
+  const joinedGameId = await runTransaction(db, async (tx) => {
     // 1. ALL READS FIRST
     const tableSnap = await tx.get(tableRef);
     if (!tableSnap.exists()) {
@@ -541,8 +655,11 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
     const winDeduct = remainingAfterDeposit - bonusDeduct;
 
     // 2. ALL WRITES AFTER
-    // If no active game or previous game is finished, create a new game session
-    if (!gameId || !gameData || gameData.status === 'COMPLETED' || gameData.status === 'RESULT') {
+    // If no active game, previous game is finished, or player was dropped from an active commenced match, create a fresh game session
+    const isPlayerDroppedFromTable = existingPlayerSnap && existingPlayerSnap.exists() && (existingPlayerSnap.data() as GamePlayerState).status === 'dropped';
+    const isTableGameInactive = !gameId || !gameData || gameData.status === 'COMPLETED' || gameData.status === 'RESULT';
+
+    if (isTableGameInactive || (isPlayerDroppedFromTable && (gameData?.status === 'PLAYING' || gameData?.status === 'TOSS' || gameData?.status === 'DEAL' || gameData?.status === 'DECLARE'))) {
       gameId = `game_${tableId}_${Date.now()}`;
       gameDocRef = doc(db, 'games', gameId);
 
@@ -601,7 +718,7 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
         updatedAt: new Date().toISOString(),
       });
 
-      return gameId;
+      return gameId as string;
     }
 
     // Existing active game session: check if user is already seated
@@ -609,13 +726,17 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
       const pData = existingPlayerSnap.data() as GamePlayerState;
       if (pData.status !== 'dropped' && pData.status !== 'eliminated') {
         // Re-joining already seated active game
-        return gameId;
+        return gameId as string;
       }
     }
 
     // Check maximum players
     if (tableData.currentPlayers >= tableData.maxPlayers) {
       throw new Error('This table is already full (maximum capacity reached).');
+    }
+
+    if (!gameData || !gameId) {
+      throw new Error('Game session not found.');
     }
 
     // Check if room is already locked and playing
@@ -688,8 +809,11 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
       updatedAt: new Date().toISOString(),
     });
 
-    return gameId;
+    return gameId as string;
   });
+
+  await setActiveGameSession(profile.uid, joinedGameId);
+  return joinedGameId;
 }
 
 /**
@@ -904,6 +1028,7 @@ export async function leaveTable(
     });
   }
 
+  await clearActiveGameSession(uid, gameId);
   return { refunded: refundAmount > 0, refundAmount };
 }
 
@@ -1153,20 +1278,77 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
 
     // Determine next player: ALWAYS pass turn to another active player!
     const otherActivePlayers = playerDocs
-      .filter((p) => p.uid !== playerUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .filter((p) => p.uid !== playerUid && p.status === 'playing' && !gameData.droppedUids?.includes(p.uid))
       .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
-    let nextPlayerUid = playerUid; // fallback only if literally no other player exists
-    if (otherActivePlayers.length > 0) {
-      const currentSeat = playerData.seatIndex || 0;
-      const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > currentSeat);
-      nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
+    const updatedOpenDeck = [...(gameData.openDeck || []), discarded];
+
+    // If no other active players remain (all opponents dropped), playerUid wins immediately!
+    if (otherActivePlayers.length === 0) {
+      const entryFee = gameData.entryFee || 20;
+      const scores: Record<string, number> = {};
+      const penalties: Record<string, string> = {};
+      const payouts: Record<string, number> = {};
+      let totalGrossPot = 0;
+      let totalPointsLost = 0;
+
+      for (const p of playerDocs) {
+        if (p.uid === playerUid) {
+          penalties[p.uid] = 'Winner';
+        } else {
+          const pLoss = p.score || 20;
+          const pLossRupees = p.dropPenaltyRupees || (pLoss === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100);
+          scores[p.uid] = pLoss;
+          penalties[p.uid] = `Dropped (${pLoss} pts, -₹${pLossRupees})`;
+          totalGrossPot += pLossRupees;
+          totalPointsLost += pLoss;
+        }
+      }
+      scores[playerUid] = totalPointsLost;
+
+      const feePercent = 14;
+      const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+      const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
+      payouts[playerUid] = playerNetShare;
+      const winnerBuyInRefund = playerData.entryPaid || entryFee;
+
+      tx.update(playerRef, {
+        cards: updatedHand,
+        cardCount: updatedHand.length,
+        turnsCount: (playerData.turnsCount || 0) + 1,
+        missedTurns: 0,
+      });
+
+      tx.update(gameRef, {
+        openDeck: updatedOpenDeck,
+        status: 'RESULT',
+        phase: 'RESULT',
+        winnerUid: playerUid,
+        resultData: {
+          winnerUid: playerUid,
+          scores,
+          penalties,
+          grossWin: totalGrossPot,
+          platformFee,
+          feePercent,
+          adminShare: platformFee,
+          playerNetShare,
+          payouts,
+          winnerBuyInRefund,
+          settlementStatus: 'completed',
+          completedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      });
+      return;
     }
+
+    const currentSeat = playerData.seatIndex || 0;
+    const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > currentSeat);
+    const nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
 
     const now = Date.now();
     const nextDeadline = now + 60000; // 60s base turn timer
-
-    const updatedOpenDeck = [...(gameData.openDeck || []), discarded];
 
     // 2. ALL WRITES AFTER
     tx.update(playerRef, {
@@ -1640,54 +1822,7 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
 
     const currentMissed = timedOutPlayer.missedTurns || 0;
 
-    // Check if player has fewer than 2 strikes (3rd strike = auto-drop)
-    if (currentMissed < 2) {
-      // Strike 1 or 2: Auto-play turn / pass turn without dropping player!
-      const currentHand = [...(timedOutPlayer.cards || [])];
-      let updatedHand = currentHand;
-      let newOpenDeck = [...(game.openDeck || [])];
-
-      if (Boolean(game.hasDrawn) || currentHand.length >= 14) {
-        // Player already drew: discard last/drawn card to open deck
-        const discarded = updatedHand.pop();
-        if (discarded) {
-          newOpenDeck.push(discarded);
-        }
-      }
-
-      // Determine next clockwise active player
-      const otherActivePlayers = allPlayers
-        .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
-        .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
-
-      let nextPlayerUid = currentTurnUid;
-      if (otherActivePlayers.length > 0) {
-        const currentSeat = timedOutPlayer.seatIndex || 0;
-        const nextClockwise = otherActivePlayers.find((p) => (p.seatIndex || 0) > currentSeat);
-        nextPlayerUid = nextClockwise ? nextClockwise.uid : otherActivePlayers[0].uid;
-      }
-
-      // Update player with strike count, keep status 'playing'
-      tx.update(playerRef, {
-        cards: updatedHand,
-        cardCount: updatedHand.length,
-        missedTurns: currentMissed + 1,
-      });
-
-      tx.update(gameRef, {
-        openDeck: newOpenDeck,
-        turnUid: nextPlayerUid,
-        turnStartedAt: now,
-        turnDeadline: now + 60000,
-        turnExtensionCount: 0,
-        hasDrawn: false,
-        updatedAt: new Date().toISOString(),
-      });
-
-      return null;
-    }
-
-    // 3rd Strike: Player missed 3 consecutive turns without playing -> Auto-drop!
+    // 1-strike 60s Lifeline Rule: If player fails to play within 60s turn, auto-drop player immediately
     const isFirstDrop = (timedOutPlayer.turnsCount || 0) === 0 && !game.hasDrawn;
     const dropPts = isFirstDrop ? 20 : 40;
     const entryFee = game.entryFee || 20;
@@ -1701,12 +1836,14 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
       dropPenalty: dropPts,
       dropPenaltyRupees,
       isFirstDrop,
-      missedTurns: currentMissed + 1,
+      missedTurns: (timedOutPlayer.missedTurns || 0) + 1,
       droppedAt: new Date().toISOString(),
     });
 
+    const updatedDroppedUids = Array.from(new Set([...(game.droppedUids || []), currentTurnUid]));
+
     const remainingActive = allPlayers
-      .filter((p) => p.uid !== currentTurnUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
+      .filter((p) => p.uid !== currentTurnUid && p.status === 'playing' && !updatedDroppedUids.includes(p.uid))
       .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
     if (remainingActive.length <= 1) {
@@ -1860,6 +1997,8 @@ export async function handleTurnTimeout(gameId: string, currentTurnUid: string, 
       console.warn('Auto-drop immediate settlement note:', settleErr);
     }
   }
+
+  await clearActiveGameSession(currentTurnUid, gameId);
 }
 
 /**
@@ -1884,9 +2023,13 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
     if (!playerSnap.exists()) return null;
     const playerData = playerSnap.data() as GamePlayerState;
 
+    const seatedMatchUids = Array.isArray(game.playerUids) && game.playerUids.length > 0
+      ? game.playerUids
+      : discoveredUids;
+
     const allPlayerUids = Array.from(new Set([
-      ...(game.playerUids || []),
-      ...discoveredUids,
+      ...seatedMatchUids,
+      playerUid,
     ]));
 
     const allPlayers: GamePlayerState[] = [];
@@ -1933,11 +2076,11 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       droppedAt: new Date().toISOString(),
     });
 
-    const remainingActive = allPlayers
-      .filter((p) => p.uid !== playerUid && (p.status === 'playing' || p.status === 'waiting' || !p.status))
-      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
-
     const updatedDroppedUids = Array.from(new Set([...(game.droppedUids || []), playerUid]));
+
+    const remainingActive = allPlayers
+      .filter((p) => p.uid !== playerUid && p.status === 'playing' && !updatedDroppedUids.includes(p.uid))
+      .sort((a, b) => (a.seatIndex || 0) - (b.seatIndex || 0));
 
     if (remainingActive.length <= 1) {
       const winner = remainingActive[0];
@@ -2096,6 +2239,8 @@ export async function dropGame(gameId: string, playerUid: string): Promise<void>
       console.warn('Error settling interim drop loss:', e);
     }
   }
+
+  await clearActiveGameSession(playerUid, gameId);
 }
 
 /**
@@ -2265,6 +2410,139 @@ export async function declareHand(
       console.warn('Invalid declaration droppedUids update:', e);
     }
 
+    await clearActiveGameSession(playerUid, gameId);
     return validation;
+  }
+}
+
+/**
+ * Conclude match immediately if only 1 active player remains (fail-safe for opponent drop/disconnect)
+ */
+export async function autoConcludeSoloSurvivor(gameId: string, playerUid: string): Promise<boolean> {
+  const gameRef = doc(db, 'games', gameId);
+  const playersRef = collection(db, 'games', gameId, 'players');
+
+  const pSnap = await getDocs(playersRef);
+  const discoveredUids = pSnap.docs.map((d) => d.id);
+
+  try {
+    const winnerToCredit = await runTransaction(db, async (tx) => {
+      const gameSnap = await tx.get(gameRef);
+      if (!gameSnap.exists()) return null;
+      const game = gameSnap.data() as GameState;
+      if (game.status !== 'PLAYING') return null;
+
+      const seatedMatchUids = Array.isArray(game.playerUids) && game.playerUids.length > 0
+        ? game.playerUids
+        : discoveredUids;
+
+      const allPlayerUids = Array.from(new Set([
+        ...seatedMatchUids,
+        playerUid,
+      ]));
+
+      const allPlayers: GamePlayerState[] = [];
+      for (const pUid of allPlayerUids) {
+        const pRef = doc(db, 'games', gameId, 'players', pUid);
+        const pSnap = await tx.get(pRef);
+        if (pSnap.exists()) {
+          allPlayers.push(pSnap.data() as GamePlayerState);
+        }
+      }
+
+      const myPlayer = allPlayers.find((p) => p.uid === playerUid);
+      if (!myPlayer || myPlayer.status === 'dropped' || myPlayer.status === 'eliminated') {
+        return null;
+      }
+
+      const otherActive = allPlayers.filter(
+        (p) => p.uid !== playerUid && p.status === 'playing' && !game.droppedUids?.includes(p.uid)
+      );
+
+      if (otherActive.length > 0) {
+        return null; // Other players are still actively playing
+      }
+
+      // Only this player is left active! Finalize victory immediately!
+      const scores: Record<string, number> = {};
+      const penalties: Record<string, string> = {};
+      const payouts: Record<string, number> = {};
+      let totalGrossPot = 0;
+      let totalPointsLost = 0;
+      const entryFee = game.entryFee || 20;
+
+      for (const p of allPlayers) {
+        if (p.uid === playerUid) {
+          penalties[p.uid] = 'Winner';
+        } else {
+          const pLoss = p.score || 20;
+          const pLossRupees = p.dropPenaltyRupees || (pLoss === 20 ? Math.round(entryFee * 0.25 * 100) / 100 : Math.round(entryFee * 0.50 * 100) / 100);
+          scores[p.uid] = pLoss;
+          penalties[p.uid] = `Dropped (${pLoss} pts, -₹${pLossRupees})`;
+          totalGrossPot += pLossRupees;
+          totalPointsLost += pLoss;
+        }
+      }
+      scores[playerUid] = totalPointsLost;
+
+      const feePercent = 14;
+      const platformFee = Math.round(totalGrossPot * (feePercent / 100) * 100) / 100;
+      const playerNetShare = Math.round((totalGrossPot - platformFee) * 100) / 100;
+      payouts[playerUid] = playerNetShare;
+      const winnerBuyInRefund = myPlayer.entryPaid || entryFee;
+
+      tx.update(gameRef, {
+        status: 'RESULT',
+        phase: 'RESULT',
+        winnerUid: playerUid,
+        resultData: {
+          winnerUid: playerUid,
+          scores,
+          penalties,
+          grossWin: totalGrossPot,
+          platformFee,
+          feePercent,
+          adminShare: platformFee,
+          playerNetShare,
+          payouts,
+          winnerBuyInRefund,
+          settlementStatus: 'completed',
+          completedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      });
+
+      return {
+        winnerUid: playerUid,
+        grossWin: totalGrossPot,
+        platformFee,
+        playerNetShare,
+        entryBuyInRefund: winnerBuyInRefund,
+        breakdown: myPlayer.deductionBreakdown,
+        gameMode: game.mode,
+        pointsWon: totalPointsLost,
+        pointValue: game.pointValue || (entryFee / 80),
+        entryFee,
+      };
+    });
+
+    if (winnerToCredit) {
+      await creditWinnerPayout(
+        gameId,
+        winnerToCredit.gameMode,
+        winnerToCredit.winnerUid,
+        winnerToCredit.grossWin,
+        winnerToCredit.platformFee,
+        winnerToCredit.playerNetShare,
+        winnerToCredit.entryBuyInRefund,
+        winnerToCredit.breakdown,
+        winnerToCredit.pointsWon
+      );
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('Auto-conclude solo survivor notice:', err);
+    return false;
   }
 }

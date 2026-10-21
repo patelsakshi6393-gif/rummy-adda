@@ -20,9 +20,11 @@ import {
   handleTurnTimeout,
   dropGame,
   declareHand,
+  autoConcludeSoloSurvivor,
   leaveMatchQueue,
   leaveTable,
   sendPlayerHeartbeat,
+  clearActiveGameSession,
   startPracticeBotMatch,
   playBotTurn,
   calculateDropPenalty,
@@ -72,14 +74,29 @@ import {
   Smartphone,
   Bot,
   Play,
+  LogOut,
 } from 'lucide-react';
 import { HowToPlayModal } from '@/components/HowToPlayModal';
+
+function getCardPenaltyPoints(card: Card, wildJokerRank?: string): number {
+  if (card.isPrintedJoker || card.suit === 'joker' || card.rank === 'JOKER') return 0;
+  if (wildJokerRank && card.rank.toLowerCase() === wildJokerRank.toLowerCase()) return 0;
+  if (card.rank === 'A' || card.rank === 'K' || card.rank === 'Q' || card.rank === 'J' || card.rank === '10') {
+    return 10;
+  }
+  const num = parseInt(card.rank, 10);
+  return isNaN(num) ? 10 : num;
+}
+
+function getGroupPoints(cards: Card[], wildJokerRank?: string): number {
+  return cards.reduce((sum, c) => sum + getCardPenaltyPoints(c, wildJokerRank), 0);
+}
 
 export default function GameRoomPage() {
   const params = useParams();
   const gameId = params?.gameId as string;
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const { user, profile, wallet } = useAuth();
 
   const [game, setGame] = useState<GameState | null>(null);
   const [players, setPlayers] = useState<GamePlayerState[]>([]);
@@ -390,6 +407,22 @@ export default function GameRoomPage() {
       }
     }
   }, [game?.status, game?.resultData, game?.winnerUid, user?.uid]);
+
+  // 8. Auto-conclude solo survivor when all opponents have dropped
+  useEffect(() => {
+    if (!game || game.status !== 'PLAYING' || !user || !myPlayer) return;
+    if (myPlayer.status === 'playing') {
+      const matchUids = (game.playerUids || []).filter(Boolean);
+      const otherSeated = players.filter((p) => p.uid !== user.uid && matchUids.includes(p.uid));
+      if (otherSeated.length > 0) {
+        const stillActive = otherSeated.filter((p) => p.status === 'playing');
+        if (stillActive.length === 0) {
+          // All seated opponents have dropped or left! Conclude match immediately!
+          autoConcludeSoloSurvivor(game.gameId, user.uid);
+        }
+      }
+    }
+  }, [game?.status, game?.playerUids, game?.gameId, players, user?.uid, myPlayer?.status]);
 
   // Synchronize player hand groups when myPlayer?.cards updates
   useEffect(() => {
@@ -729,22 +762,41 @@ export default function GameRoomPage() {
 
   const handleLeaveTable = async () => {
     if (!game || !user) {
+      if (user) {
+        await clearActiveGameSession(user.uid, gameId);
+      }
       router.push('/lobby');
       return;
     }
-    if (game.status === 'PLAYING') {
+    // If player already dropped or eliminated, do not prompt for drop; leave immediately
+    if (game.status === 'PLAYING' && myPlayer?.status !== 'dropped' && myPlayer?.status !== 'eliminated') {
       setShowDropModal(true);
       return;
     }
     setActionLoading(true);
     try {
       await leaveTable(game.gameId, game.tableId, user.uid);
+      await clearActiveGameSession(user.uid, game.gameId);
     } catch (err) {
       console.warn('Seat release notice:', err);
     } finally {
       setActionLoading(false);
       router.push('/lobby');
     }
+  };
+
+  const handleReturnToLobbyFromDrop = async () => {
+    if (user && game) {
+      await clearActiveGameSession(user.uid, game.gameId);
+    }
+    router.push('/lobby');
+  };
+
+  const handlePlayNewMatchFromDrop = async () => {
+    if (user && game) {
+      await clearActiveGameSession(user.uid, game.gameId);
+    }
+    router.push(`/match/stakes?format=${game?.mode || 'points'}`);
   };
 
   // Actions
@@ -957,76 +1009,72 @@ export default function GameRoomPage() {
     <AuthGuard>
       {/* Main Game Table (Adaptive for Phone, Tablet, & Desktop) */}
       <div className="h-[100dvh] max-h-[100dvh] bg-[#06070a] text-slate-100 flex flex-col select-none overflow-hidden relative">
-        {/* Table Top Header Bar (Ultra-Compact on mobile landscape) */}
-        <div className="bg-[#0b0d14]/95 backdrop-blur border-b border-amber-500/20 px-2 sm:px-3 py-0.5 sm:py-1 flex items-center justify-between z-30 shrink-0 h-8 sm:h-10">
-          <div className="flex items-center gap-1 sm:gap-2">
+        {/* Table Top Header Bar (Crimson Burgundy matching screenshot) */}
+        <div className="bg-gradient-to-r from-[#70050d] via-[#870a14] to-[#70050d] border-b border-black/40 px-3 sm:px-5 py-1 flex items-center justify-between z-30 shrink-0 h-9 sm:h-11 shadow-lg">
+          <div className="flex items-center gap-2">
             <button
               onClick={handleLeaveTable}
-              className="p-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
-              title="Leave Table"
+              className="p-1 rounded text-white/90 hover:text-white hover:bg-black/20 transition-colors flex items-center"
+              title="Leave / Exit Table"
+              aria-label="Leave Table"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <LogOut className="w-5 h-5 text-white" />
             </button>
-
-            <div className="flex items-center gap-1 sm:gap-2">
-              <span className="text-[10px] sm:text-xs font-black tracking-wider text-white uppercase">
-                {game?.mode === 'pool101' ? 'POOL 101' : game?.mode}
-              </span>
-              <span className="text-[9px] font-mono text-amber-400">
-                ₹{game?.entryFee} • {players.length}/6
-              </span>
-            </div>
           </div>
 
-          {/* Reconnecting / Server sync indicator */}
-          {isReconnecting && (
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[8px] font-bold animate-pulse">
-              <Loader2 className="w-2 h-2 animate-spin" />
-              <span>SYNCING</span>
-            </div>
-          )}
+          {/* Match Info: # 20261021103657-49057-1 | Points (10) : Entry : 800 | 🪙 100000 */}
+          <div className="flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs font-bold text-white tracking-wide">
+            <span className="font-mono text-white/90">
+              # {game?.gameId ? game.gameId.replace(/[^0-9]/g, '').slice(-16) || game.gameId.slice(-14) : '20261021103657-49057-1'}
+            </span>
+            <span className="text-white/40">|</span>
+            <span className="text-white font-semibold">
+              Points ({game?.pointValue || 10})
+            </span>
+            <span className="text-white/60">:</span>
+            <span className="text-white font-semibold">
+              Entry : {game?.entryFee || 800}
+            </span>
+            <span className="text-white/40">|</span>
+            <span className="flex items-center gap-1 font-mono font-black text-white">
+              <span className="text-amber-300">🪙</span>
+              <span>
+                {((wallet?.depositBalance || 0) + (wallet?.winBalance || 0) + (wallet?.bonusBalance || 0) || 100000).toLocaleString()}
+              </span>
+            </span>
+          </div>
 
-          {/* Controls: Auto-Rotate, Rules, Audio, Drop */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleToggleAutoRotate}
-              className="p-1 rounded-md bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] flex items-center"
-              title="Rotate Screen"
-              aria-label="Rotate Screen"
-            >
-              <RotateCw className="w-3 h-3 text-amber-400" />
-            </button>
-
-            <button
-              onClick={() => setShowHowToPlayModal(true)}
-              className="py-0.5 px-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-bold flex items-center gap-0.5"
-              title="Rules"
-              aria-label="Game Rules"
-            >
-              <BookOpen className="w-3 h-3 text-amber-400" />
-              <span className="hidden sm:inline">Rules</span>
-            </button>
-
+          {/* Right Controls: Mute, Rules, Auto-Rotate */}
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => {
                 const next = !soundEnabled;
                 setSoundEnabled(next);
                 soundManager.enabled = next;
               }}
-              className="p-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300"
+              className="p-1 text-white/80 hover:text-white"
               title="Audio"
               aria-label={soundEnabled ? 'Mute Game Audio' : 'Unmute Game Audio'}
             >
-              {soundEnabled ? <Volume2 className="w-3 h-3 text-amber-400" /> : <VolumeX className="w-3 h-3 text-slate-500" />}
+              {soundEnabled ? <Volume2 className="w-4 h-4 text-amber-300" /> : <VolumeX className="w-4 h-4 text-white/40" />}
             </button>
 
             <button
-              onClick={() => setShowDropModal(true)}
-              disabled={game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
-              className="py-0.5 px-2 rounded-md bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-[9px] font-black uppercase transition-all disabled:opacity-40"
-              aria-label="Drop Game Match"
+              onClick={() => setShowHowToPlayModal(true)}
+              className="p-1 text-white/80 hover:text-white hidden sm:block"
+              title="Game Rules"
+              aria-label="Game Rules"
             >
-              DROP
+              <BookOpen className="w-4 h-4 text-amber-300" />
+            </button>
+
+            <button
+              onClick={handleToggleAutoRotate}
+              className="p-1 text-white/80 hover:text-white"
+              title="Rotate Screen"
+              aria-label="Rotate Screen"
+            >
+              <RotateCw className="w-4 h-4 text-white/90" />
             </button>
           </div>
         </div>
@@ -1062,659 +1110,609 @@ export default function GameRoomPage() {
         )}
 
         {/* 
-          6-PLAYER CIRCULAR/OVAL LUXURY CASINO TABLE (Fully Adaptive for Phone Landscape, Tablet & Desktop)
+          6-PLAYER CIRCULAR/OVAL LUXURY CASINO TABLE (Exact Match to Screenshot)
         */}
-        <div className="flex-1 relative flex items-center justify-center p-0.5 sm:p-1 w-full h-full max-h-[calc(100dvh-32px)] overflow-hidden">
-          <div className="w-full max-w-7xl h-full max-h-full rounded-xl sm:rounded-2xl md:rounded-[36px] bg-gradient-to-b from-[#2a1708] via-[#1a0f05] to-[#2a1708] p-0.5 sm:p-1 shadow-2xl relative border-2 border-amber-600/30 flex items-center justify-center">
-            {/* Gold Rail Lip */}
-            <div className="w-full h-full rounded-lg sm:rounded-xl md:rounded-[30px] border border-amber-400/40 p-0.5 bg-[#0d0905]">
-              {/* Green Felt Surface with Radial Glow */}
-              <div className="w-full h-full rounded-md sm:rounded-lg md:rounded-[26px] table-felt-radial border border-emerald-950 shadow-inner relative flex flex-col justify-between p-0.5 sm:p-1 overflow-hidden">
-                {/* Felt Watermark */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.04]">
-                  <span className="text-3xl sm:text-6xl md:text-8xl font-black text-white">♠ RUMMYADDA</span>
+        <div className="flex-1 relative flex flex-col items-center justify-between p-1 sm:p-2 w-full h-full max-h-[calc(100dvh-40px)] overflow-hidden">
+          {/* Main Oval Table with Charcoal Rail & Casino Green Felt */}
+          <div className="w-full max-w-6xl flex-1 max-h-[calc(100dvh-100px)] rounded-[32px] sm:rounded-[50px] md:rounded-[70px] bg-[#141518] p-1.5 sm:p-2.5 shadow-2xl relative border-4 border-[#22242a] flex items-center justify-center my-auto">
+            {/* Emerald Green Felt Surface */}
+            <div className="w-full h-full rounded-[24px] sm:rounded-[42px] md:rounded-[60px] bg-[#158045] border-2 border-[#1fa357]/60 shadow-inner relative flex flex-col justify-between p-1.5 sm:p-2.5 overflow-hidden">
+              {/* Felt Watermark */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03]">
+                <span className="text-4xl sm:text-7xl md:text-9xl font-black text-white">♠ RUMMYADDA</span>
+              </div>
+
+              {/* 
+                1. TOP SEATS & EMPTY SEATS ROW (Exact Placement matching screenshot)
+              */}
+              <div className="w-full relative z-20 flex items-center justify-between px-2 sm:px-6 pt-0.5 shrink-0">
+                {/* Top-Left Empty Seat (or Opponent 2) */}
+                <div className="flex items-center gap-1.5 pointer-events-none">
+                  {opponents[1] ? (
+                    <div className="flex items-center gap-1">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
+                        <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
+                          {opponents[1].displayName?.slice(0, 2).toUpperCase() || 'P'}
+                        </div>
+                      </div>
+                      <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[60px] truncate">
+                        {opponents[1].displayName}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
+                        <Users className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                      <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
+                        Empty seat
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* 
-                  1. TOP OPPONENT SEATS ROW (5 Seats for Opponents in 6-Player Table)
-                */}
-                <div className="grid grid-cols-5 gap-1 sm:gap-2 w-full relative z-10 pt-0.5 shrink-0">
-                  {opponentSlots.map((idx) => {
-                    const opp = opponents[idx];
-                    if (opp) {
+                {/* Top-Center Main Opponent Seat (with Green Ring & Dealer "D" Badge) */}
+                <div className="flex items-center gap-1.5">
+                  {opponents[0] ? (
+                    (() => {
+                      const opp = opponents[0];
                       const isOppTurn = game?.turnUid === opp.uid;
                       return (
-                        <div key={opp.uid} className="flex flex-col items-center gap-0.2 relative">
-                          <div
-                            className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 rounded-md sm:rounded-lg p-0.5 transition-all shadow-md ${
-                              isOppTurn
-                                ? 'bg-gradient-to-tr from-amber-400 to-yellow-300 ring-2 ring-amber-400/50 scale-105'
-                                : 'bg-slate-700/60'
-                            }`}
-                          >
-                            <div className="w-full h-full bg-[#11131c] rounded-[4px] sm:rounded-[6px] flex items-center justify-center text-white font-bold text-[8px] sm:text-[10px] relative">
-                              <span>{opp.displayName?.charAt(0).toUpperCase() || 'P'}</span>
-                              {opp.isDealer && (
-                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-amber-400 text-black font-black text-[6px] sm:text-[7px] flex items-center justify-center shadow">
-                                  D
-                                </span>
-                              )}
+                        <div className="flex items-center gap-1.5 relative">
+                          <div className="relative">
+                            {/* Vibrant Green Circular Ring */}
+                            <div
+                              className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full p-[2.5px] shadow-lg transition-all ${
+                                isOppTurn ? 'bg-[#00e676] ring-4 ring-[#00e676]/40 animate-pulse scale-105' : 'bg-[#00e676]'
+                              }`}
+                            >
+                              <div className="w-full h-full rounded-full overflow-hidden bg-[#1a2233] flex items-center justify-center text-white font-black text-xs sm:text-sm">
+                                {opp.photoURL ? (
+                                  <img src={opp.photoURL} alt={opp.displayName} className="w-full h-full object-cover" />
+                                ) : (
+                                  <span>{opp.displayName?.slice(0, 2).toUpperCase() || 'P'}</span>
+                                )}
+                              </div>
                             </div>
+                            {/* Dealer "D" Badge */}
+                            {opp.isDealer && (
+                              <div className="w-4 h-4 rounded-full bg-[#f59e0b] border border-black/40 text-black font-black text-[9px] flex items-center justify-center shadow absolute -top-1 -right-1">
+                                D
+                              </div>
+                            )}
                           </div>
-
-                          <div className="text-center leading-tight">
-                            <span className="block text-[7px] sm:text-[8px] font-bold text-white max-w-[45px] sm:max-w-[65px] truncate">
-                              {opp.displayName}
+                          {/* Dark Rectangular Pill with Name & Balance/Cards */}
+                          <div className="bg-black/85 backdrop-blur border border-white/10 rounded-md sm:rounded-lg px-2 py-0.5 min-w-[70px] shadow text-left">
+                            <span className="block text-[9px] sm:text-[10px] font-bold text-white max-w-[85px] truncate leading-tight">
+                              {opp.displayName || '82929581'}
                             </span>
-                            <span className="text-[6px] sm:text-[7px] font-mono text-amber-300 font-semibold block">
+                            <span className="block text-[8px] sm:text-[9px] font-mono text-white/70 leading-tight">
                               {opp.status === 'dropped' ? (
-                                <span className="text-rose-400">Dropped</span>
+                                <span className="text-rose-400 font-bold">Dropped</span>
+                              ) : opp.status === 'eliminated' ? (
+                                <span className="text-rose-400 font-bold">Eliminated</span>
                               ) : (
-                                `${opp.cardCount || 13} Cards`
+                                <span>{opp.cardCount || 13} Cards</span>
                               )}
                             </span>
                           </div>
                         </div>
                       );
-                    }
-
-                    // Empty seat slot
-                    return (
-                      <div key={`empty-${idx}`} className="flex flex-col items-center gap-0.2 opacity-30">
-                        <div className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 rounded-md sm:rounded-lg border border-dashed border-white/20 flex flex-col items-center justify-center text-slate-500">
-                          <Users className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                        </div>
-                        <span className="text-[6px] sm:text-[7px] text-slate-400 font-medium">Empty</span>
+                    })()
+                  ) : (
+                    /* Waiting state top avatar */
+                    <div className="flex items-center gap-1.5 opacity-60">
+                      <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full p-[2px] bg-[#00e676]/50 shadow flex items-center justify-center">
+                        <Users className="w-5 h-5 text-white/80" />
                       </div>
-                    );
-                  })}
+                      <div className="bg-black/75 rounded-md px-2 py-0.5 text-[8px] text-white">
+                        Waiting...
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* 
-                  2. CENTER TABLE AREA (Waiting state / 15s Countdown / Playing Decks - Balanced Responsive Layout)
-                */}
-                <div className="flex-1 flex items-center justify-center gap-3 sm:gap-6 md:gap-10 relative z-10 my-auto min-h-0 py-0.5">
-                  {/* WAITING ROOM (when waiting for real players) */}
-                  {game?.status === 'WAITING' && (
-                    <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-4 sm:py-6 rounded-2xl sm:rounded-3xl text-center space-y-3.5 shadow-2xl max-w-sm sm:max-w-md w-full">
-                      <div className="flex items-center justify-center gap-2 text-amber-400">
-                        <Users className="w-5 h-5 animate-pulse" />
-                        <span className="font-extrabold text-xs sm:text-sm uppercase tracking-wider">
-                          Waiting for Players ({players.length}/6)
-                        </span>
-                      </div>
-
-                      <div className="py-2 space-y-2">
-                        <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-                        <p className="text-xs text-slate-200 font-semibold">
-                          Waiting for another real player to join the table...
-                        </p>
-                        <p className="text-[11px] text-amber-300/80">
-                          Table Fee: ₹{game.entryFee} • Match starts automatically when 2nd player joins
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleLeaveQueue}
-                        disabled={leavingQueue}
-                        className="w-full py-2 px-4 rounded-xl bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-xs border border-white/10 hover:border-rose-500/40 transition-colors disabled:opacity-50"
-                      >
-                        {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* 15-SECOND SYNCHRONIZED COUNTDOWN */}
-                  {game?.status === 'COUNTDOWN' && (
-                    <div className="bg-black/85 backdrop-blur-md border border-amber-400 px-6 sm:px-8 py-3 sm:py-5 rounded-2xl sm:rounded-3xl text-center space-y-1.5 shadow-2xl animate-pulse">
-                      <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-amber-400">
-                        Match Starting ({players.length}/6 Players)
+                {/* Top-Right Empty Seat (or Opponent 3) */}
+                <div className="flex items-center gap-1.5 pointer-events-none">
+                  {opponents[2] ? (
+                    <div className="flex items-center gap-1">
+                      <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[60px] truncate">
+                        {opponents[2].displayName}
                       </span>
-                      <div className="text-3xl sm:text-5xl font-black text-amber-300 font-mono">
-                        {countdownLeft}s
-                      </div>
-                      <p className="text-[10px] sm:text-[11px] text-slate-300">Dealing 13 cards to each player...</p>
-                    </div>
-                  )}
-
-                  {/* ACTIVE PLAYING CENTER */}
-                  {game?.status === 'PLAYING' && (
-                    <div className="flex items-center gap-3 sm:gap-6 scale-90 sm:scale-100 origin-center">
-                      {/* Wild Joker Display */}
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] uppercase font-black tracking-wider text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded-full border border-amber-500/30">
-                          JOKER
-                        </span>
-                        {game.wildJoker ? (
-                          <div className="rotate-90 origin-center scale-80 sm:scale-95">
-                            <PlayingCard card={game.wildJoker} size="sm" disabled />
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {/* Closed Deck (Draw Pile) */}
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] uppercase font-bold text-slate-300">Closed</span>
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`Draw card from closed deck. ${game.closedDeckCount} cards remaining.`}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              handleDraw('closed');
-                            }
-                          }}
-                          onClick={() => handleDraw('closed')}
-                          className={`w-10 h-14 min-[390px]:w-11 min-[390px]:h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg bg-gradient-to-br from-rose-900 via-rose-800 to-amber-900 border-2 border-amber-400/50 shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all ${
-                            isMyTurn && !hasDrawn
-                              ? 'ring-2 sm:ring-4 ring-amber-400 hover:scale-105 shadow-amber-500/40 animate-pulse'
-                              : 'opacity-90'
-                          }`}
-                        >
-                          <span className="text-xs sm:text-base font-black text-amber-400">♠</span>
-                          <span className="text-[7px] min-[390px]:text-[8px] sm:text-[9px] font-bold text-amber-200">
-                            {game.closedDeckCount}
-                          </span>
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
+                        <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
+                          {opponents[2].displayName?.slice(0, 2).toUpperCase() || 'P'}
                         </div>
                       </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
+                        Empty seat
+                      </div>
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
+                        <Users className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
-                      {/* Open Deck (Discard Pile with Direct Drop Support) */}
+              {/* Middle Table Side Seats (Mid-Left & Mid-Right Empty Seats) */}
+              <div className="absolute inset-y-0 left-1 sm:left-3 flex items-center pointer-events-none z-10">
+                {opponents[3] ? (
+                  <div className="flex items-center gap-1 pointer-events-auto">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
+                      <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
+                        {opponents[3].displayName?.slice(0, 2).toUpperCase() || 'P'}
+                      </div>
+                    </div>
+                    <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[55px] truncate">
+                      {opponents[3].displayName}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
+                      <Users className="w-3.5 h-3.5 text-slate-400" />
+                    </div>
+                    <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
+                      Empty seat
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="absolute inset-y-0 right-1 sm:right-3 flex items-center pointer-events-none z-10">
+                {opponents[4] ? (
+                  <div className="flex items-center gap-1 pointer-events-auto">
+                    <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[55px] truncate">
+                      {opponents[4].displayName}
+                    </span>
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
+                      <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
+                        {opponents[4].displayName?.slice(0, 2).toUpperCase() || 'P'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
+                      Empty seat
+                    </div>
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
+                      <Users className="w-3.5 h-3.5 text-slate-400" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 
+                2. CENTER PLAY AREA (Closed Deck + Wild Joker under + FINISH SLOT + Open Deck + Blue Badge)
+              */}
+              <div className="flex-1 flex items-center justify-center gap-4 sm:gap-8 md:gap-12 relative z-20 my-auto py-1">
+                {/* WAITING ROOM (when waiting for real players) */}
+                {game?.status === 'WAITING' && (
+                  <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-3 sm:py-5 rounded-2xl text-center space-y-2 shadow-2xl max-w-sm w-full">
+                    <div className="flex items-center justify-center gap-2 text-amber-400">
+                      <Users className="w-4 h-4 animate-pulse" />
+                      <span className="font-extrabold text-xs uppercase tracking-wider">
+                        Waiting for Players ({players.length}/6)
+                      </span>
+                    </div>
+                    <div className="py-1 space-y-1.5">
+                      <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                      <p className="text-[11px] text-slate-200 font-semibold">
+                        Waiting for opponent to connect...
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLeaveQueue}
+                      disabled={leavingQueue}
+                      className="w-full py-1.5 px-3 rounded-lg bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-[10px] border border-white/10 transition-colors"
+                    >
+                      {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
+                    </button>
+                  </div>
+                )}
+
+                {/* 15-SECOND SYNCHRONIZED COUNTDOWN */}
+                {game?.status === 'COUNTDOWN' && (
+                  <div className="bg-black/85 backdrop-blur-md border border-amber-400 px-6 sm:px-8 py-3 rounded-2xl text-center space-y-1 shadow-2xl animate-pulse">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+                      Match Starting ({players.length}/6 Players)
+                    </span>
+                    <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono">
+                      {countdownLeft}s
+                    </div>
+                    <p className="text-[10px] text-slate-300">Dealing 13 cards...</p>
+                  </div>
+                )}
+
+                {/* ACTIVE PLAYING CENTER DECK DISPLAY */}
+                {game?.status === 'PLAYING' && (
+                  <div className="flex items-center justify-center gap-4 sm:gap-7 md:gap-10">
+                    {/* Left: Closed Deck with Wild Joker Underneath */}
+                    <div className="relative flex items-center justify-center">
+                      {/* Wild Joker peeking horizontally underneath */}
+                      {game.wildJoker && (
+                        <div className="absolute -left-7 sm:-left-9 -top-1 sm:top-0 z-0 transform -rotate-12 hover:-rotate-6 transition-transform shadow-lg pointer-events-none">
+                          <PlayingCard card={game.wildJoker} size="sm" disabled />
+                        </div>
+                      )}
+                      {/* Closed Deck */}
                       <div
-                        data-drop-discard="true"
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          if (isMyTurn && hasDrawn) {
-                            e.dataTransfer.dropEffect = 'move';
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Draw card from closed deck. ${game.closedDeckCount} cards remaining.`}
+                        onClick={() => handleDraw('closed')}
+                        className={`relative z-10 w-11 h-16 min-[390px]:w-12 min-[390px]:h-17 sm:w-15 sm:h-21 rounded-lg bg-gradient-to-br from-[#721019] via-[#4d070d] to-[#721019] border-2 border-amber-400/90 shadow-2xl flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 ${
+                          isMyTurn && !hasDrawn
+                            ? 'ring-4 ring-amber-400 shadow-amber-400/50 scale-105 animate-pulse'
+                            : 'hover:scale-102'
+                        }`}
+                      >
+                        <div className="w-8 h-13 min-[390px]:w-9 min-[390px]:h-14 sm:w-11 sm:h-17 rounded border border-amber-300/40 flex flex-col items-center justify-center bg-black/25 p-0.5 text-center">
+                          <span className="text-[6px] sm:text-[8px] font-black text-amber-300 tracking-wider uppercase leading-none">RUMMY</span>
+                          <span className="text-[5px] sm:text-[7px] font-bold text-amber-200/80 uppercase leading-none">LEAGUE</span>
+                          <span className="text-xs sm:text-base text-amber-400 mt-0.5">♠</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Middle: FINISH SLOT */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Finish slot. Declare or show hand here."
+                      onClick={handleOpenDeclare}
+                      className="w-11 h-16 min-[390px]:w-12 min-[390px]:h-17 sm:w-15 sm:h-21 rounded-lg bg-[#0b3319] border-2 border-dashed border-emerald-400/60 hover:border-emerald-300 hover:bg-[#104222] shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 group"
+                      title="FINISH SLOT - Declare Hand Show"
+                    >
+                      <span className="text-[8px] sm:text-[10px] font-black text-emerald-300 group-hover:text-white uppercase tracking-widest leading-tight">
+                        FINISH
+                      </span>
+                      <span className="text-[7px] sm:text-[9px] font-bold text-emerald-400/80 group-hover:text-emerald-200 uppercase tracking-widest leading-tight">
+                        SLOT
+                      </span>
+                    </div>
+
+                    {/* Right: Open Deck with Blue ">> Open Card" Badge */}
+                    <div className="relative flex items-center justify-center">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={isMyTurn && hasDrawn ? 'Discard card to open deck' : 'Draw from open deck'}
+                        onClick={() => {
+                          if (isMyTurn && !hasDrawn) {
+                            handleDraw('open');
+                          } else if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
+                            handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
                           }
                         }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          if (!isMyTurn || !hasDrawn) return;
-                          const cardId = e.dataTransfer.getData('text/plain') || draggedCardInfo?.cardId;
-                          if (cardId) {
-                            handleDiscard(cardId);
-                          }
-                          setDraggedCardInfo(null);
-                        }}
-                        className={`flex flex-col items-center gap-0.5 p-0.5 rounded-lg transition-all ${
-                          isMyTurn && hasDrawn
-                            ? 'ring-2 ring-amber-400/80 bg-amber-500/10'
+                        className={`relative z-10 rounded-lg cursor-pointer transition-all active:scale-95 ${
+                          isMyTurn && !hasDrawn
+                            ? 'ring-4 ring-amber-400 shadow-xl shadow-amber-400/50 scale-105'
+                            : isMyTurn && hasDrawn
+                            ? 'ring-2 ring-amber-400 shadow-lg'
                             : ''
                         }`}
                       >
-                        <span className="text-[8px] uppercase font-bold text-slate-300">
-                          {isMyTurn && hasDrawn ? '🗑️ Discard' : 'Open'}
-                        </span>
-                        {game.openDeck.length > 0 ? (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-label={isMyTurn && hasDrawn ? 'Discard selected card here' : 'Draw from open discard pile'}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                if (isMyTurn && !hasDrawn) {
-                                  handleDraw('open');
-                                } else if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
-                                  handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
-                                }
-                              }
-                            }}
-                            onClick={() => {
-                              if (isMyTurn && !hasDrawn) {
-                                handleDraw('open');
-                              } else if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
-                                handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
-                              }
-                            }}
-                            className={`${isMyTurn && !hasDrawn ? 'ring-2 sm:ring-4 ring-amber-400 rounded-lg cursor-pointer hover:scale-105 transition-transform' : isMyTurn && hasDrawn ? 'cursor-pointer hover:scale-105 ring-2 ring-amber-400 rounded-lg' : ''}`}
-                            title={isMyTurn && hasDrawn ? 'Click or drop here to discard card' : 'Open Deck'}
-                          >
-                            <PlayingCard
-                              card={game.openDeck[game.openDeck.length - 1]}
-                              wildJokerRank={wildJokerRank}
-                              size="sm"
-                              disabled={!isMyTurn}
-                            />
-                          </div>
+                        {game.openDeck && game.openDeck.length > 0 ? (
+                          <PlayingCard
+                            card={game.openDeck[game.openDeck.length - 1]}
+                            wildJokerRank={wildJokerRank}
+                            size="sm"
+                            disabled={!isMyTurn}
+                          />
                         ) : (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-label={isMyTurn && hasDrawn ? 'Discard selected card to open slot' : 'Open deck empty'}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
-                                  handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
-                                }
-                              }
-                            }}
-                            onClick={() => {
-                              if (isMyTurn && hasDrawn && selectedCardIds.length > 0) {
-                                handleDiscard(selectedCardIds[selectedCardIds.length - 1]);
-                              }
-                            }}
-                            className={`w-10 h-14 min-[390px]:w-11 min-[390px]:h-16 sm:w-13 sm:h-19 md:w-14 md:h-20 rounded-md sm:rounded-lg border-2 border-dashed flex items-center justify-center text-[9px] sm:text-xs transition-colors ${
-                              isMyTurn && hasDrawn
-                                ? 'border-amber-400/80 text-amber-300 cursor-pointer bg-amber-500/10'
-                                : 'border-white/20 text-slate-500'
-                            }`}
-                          >
-                            {isMyTurn && hasDrawn ? 'Drop' : 'Empty'}
+                          <div className="w-11 h-16 min-[390px]:w-12 min-[390px]:h-17 sm:w-15 sm:h-21 rounded-lg border-2 border-dashed border-white/30 flex items-center justify-center text-xs text-slate-400 bg-black/20">
+                            Empty
                           </div>
                         )}
                       </div>
+
+                      {/* Blue Open Card Badge (attached to top-right) */}
+                      <div className="absolute -top-1 -right-8 sm:-right-9 z-20 bg-[#1976d2] text-white text-[7px] sm:text-[8px] font-black px-1.5 py-0.5 rounded shadow flex flex-col items-center leading-tight pointer-events-none">
+                        <span>&gt;&gt;</span>
+                        <span>Open</span>
+                        <span>Card</span>
+                      </div>
                     </div>
-                  )}
+                  </div>
+                )}
+              </div>
+
+              {/* 
+                3. PLAYER HAND & GROUPS (Arranged across lower felt with Status Pills)
+              */}
+              <div className="w-full relative z-30 shrink-0 flex flex-col items-center gap-0.5 pb-0.5">
+                {/* Floating Toast Notification */}
+                {toastNotification && (
+                  <div className="absolute -top-9 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-amber-400 to-amber-500 text-black font-black text-xs px-4 py-1 rounded-full shadow-2xl animate-bounce">
+                    {toastNotification}
+                  </div>
+                )}
+
+                {/* Multi-Card Selection Actions Bar */}
+                {selectedCardIds.length >= 2 && (
+                  <div className="flex items-center gap-2 mb-1 z-40">
+                    <button
+                      type="button"
+                      onClick={handleCreateSetFromSelection}
+                      className="py-1 px-4 rounded-full font-black text-xs uppercase shadow-xl flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-1 ring-amber-300 hover:scale-105 active:scale-95 transition-all"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>GROUP ({selectedCardIds.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCardIds([])}
+                      className="py-1 px-3 rounded-full bg-black/80 hover:bg-black text-slate-300 hover:text-white text-xs font-bold border border-white/20 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* Single Card Actions Bar */}
+                {selectedCardIds.length === 1 && (
+                  <div className="flex items-center gap-1 mb-0.5 z-40 bg-black/85 backdrop-blur px-2.5 py-0.5 rounded-full border border-amber-500/30 shadow-lg text-[9px]">
+                    {isMyTurn && hasDrawn && (
+                      <button
+                        onClick={() => handleDiscard(selectedCardIds[0])}
+                        className="py-0.5 px-2.5 rounded bg-gradient-to-r from-amber-400 to-amber-500 text-black font-black uppercase text-[9px] shadow animate-pulse flex items-center gap-1 cursor-pointer active:scale-95"
+                      >
+                        <span>🗑️ Discard</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleMoveSelectedCard('left')}
+                      className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[8px]"
+                    >
+                      ← Left
+                    </button>
+                    <button
+                      onClick={() => handleMoveSelectedCard('right')}
+                      className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold text-[8px]"
+                    >
+                      Right →
+                    </button>
+                    <button
+                      onClick={() => moveCardBetweenGroups(-1, 0, -1)}
+                      className="py-0.5 px-1.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-300 font-bold text-[8px]"
+                    >
+                      + Group
+                    </button>
+                    <button
+                      onClick={() => setSelectedCardIds([])}
+                      className="py-0.5 px-1 text-slate-400 hover:text-white text-[8px]"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Hand Groups with Status Pills matching screenshot */}
+                {handGroups.length > 0 && (
+                  <div className="w-full max-w-full px-1 flex items-end justify-center gap-1 sm:gap-2.5 overflow-x-hidden pt-1 pb-0.5">
+                    {handGroups.map((group, groupIdx) => {
+                      const meldStatus = getGroupMeldStatus(group, wildJokerRank);
+                      const isOver = dragOverGroupIdx === groupIdx;
+                      const groupScore = getGroupPoints(group, wildJokerRank);
+
+                      return (
+                        <div
+                          key={`group-${groupIdx}`}
+                          data-drop-group={groupIdx}
+                          onDragOver={(e) => handleDragOverGroup(e, groupIdx)}
+                          onDragLeave={() => setDragOverGroupIdx(null)}
+                          onDrop={(e) => handleDropOnGroup(e, groupIdx)}
+                          className={`relative rounded-lg p-0.5 transition-all flex flex-col items-center gap-0.5 shrink-0 ${
+                            isOver ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105' : ''
+                          }`}
+                        >
+                          {/* Floating Group Status Pill (Exact match to screenshot) */}
+                          <div className="mb-0.5 flex items-center justify-center">
+                            {meldStatus.type === 'pure_seq' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold text-[8px] sm:text-[9px] shadow flex items-center gap-1 leading-none">
+                                ✓ Pure Seq (0)
+                              </span>
+                            ) : meldStatus.type === 'impure_seq' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-teal-600 text-white font-bold text-[8px] sm:text-[9px] shadow flex items-center gap-1 leading-none">
+                                ⭐ Joker Seq (0)
+                              </span>
+                            ) : meldStatus.type === 'set' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white font-bold text-[8px] sm:text-[9px] shadow flex items-center gap-1 leading-none">
+                                ✓ Valid Set (0)
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-black/90 text-white font-bold text-[8px] sm:text-[9px] border border-white/20 shadow flex items-center gap-1 leading-none">
+                                <span className="w-3 h-3 rounded-full bg-red-600 text-white flex items-center justify-center text-[7px] font-black leading-none">
+                                  ✕
+                                </span>
+                                <span>Invalid ({groupScore})</span>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Horizontally Overlapping Cards in Group */}
+                          <div className="flex items-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] overflow-visible px-0.5 py-0.5">
+                            {group.map((card, cardIdx) => {
+                              const isSelected = selectedCardIds.includes(card.id);
+
+                              return (
+                                <div
+                                  key={card.id}
+                                  className="relative group/c shrink-0"
+                                  style={{
+                                    zIndex: isSelected ? 40 : cardIdx + 1,
+                                  }}
+                                  draggable={true}
+                                  onDragStart={(e) => handleDragStartCard(e, card.id, groupIdx, cardIdx)}
+                                  onTouchStart={(e) => handleTouchStartCard(e, card.id, groupIdx, cardIdx)}
+                                  onTouchMove={handleTouchMoveCard}
+                                  onTouchEnd={handleTouchEndCard}
+                                >
+                                  <PlayingCard
+                                    card={card}
+                                    wildJokerRank={wildJokerRank}
+                                    isSelected={isSelected}
+                                    onClick={() => handleCardClick(card.id)}
+                                    size="hand"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Button to Create New Group (if < 5 groups) */}
+                    {handGroups.length < 5 && (
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Create new card group"
+                        data-drop-group={-1}
+                        onDragOver={(e) => handleDragOverGroup(e, -1)}
+                        onDrop={(e) => handleDropOnGroup(e, -1)}
+                        className="rounded-lg border border-dashed border-white/30 hover:border-amber-400 p-0.5 flex flex-col items-center justify-center text-[7px] text-white/70 hover:text-amber-300 cursor-pointer w-6 min-[390px]:w-7 sm:w-8 h-[58px] min-[390px]:h-[64px] min-[420px]:h-[70px] sm:h-[82px] md:h-[94px] shrink-0 transition-colors"
+                        title="Drag card here or click to create new group"
+                      >
+                        <span className="text-xs font-bold leading-none">+</span>
+                        <span className="text-[6px]">Grp</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Fallback Single Flat Hand if handGroups empty */}
+                {handGroups.length === 0 && myPlayer?.cards && myPlayer.cards.length > 0 && (
+                  <div className="flex items-center justify-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] max-w-full overflow-x-hidden pt-1 pb-0.5 px-1">
+                    {myPlayer.cards.map((card, cardIdx) => {
+                      const isSelected = selectedCardIds.includes(card.id);
+                      return (
+                        <div
+                          key={card.id}
+                          className="relative group shrink-0"
+                          style={{
+                            zIndex: isSelected ? 40 : cardIdx + 1,
+                          }}
+                        >
+                          <PlayingCard
+                            card={card}
+                            wildJokerRank={wildJokerRank}
+                            isSelected={isSelected}
+                            onClick={() => handleCardClick(card.id)}
+                            size="hand"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 
+            4. BOTTOM BAR / CONTROL DOCK (Exact match to screenshot)
+            Score pill + REFRESH button on left | User seat in center | DISCARD + DROP on right
+          */}
+          <div className="w-full bg-[#0a0a0c]/95 border-t border-white/10 px-2 sm:px-4 py-1 sm:py-1.5 flex items-center justify-between z-40 shrink-0 h-12 sm:h-14">
+            {/* Left: Score Pill & Golden REFRESH Button */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* Score : XX Pill */}
+              <div
+                className="px-2.5 sm:px-3 py-1 rounded-full bg-black/90 border border-white/40 text-white text-[11px] sm:text-xs font-bold shadow flex items-center gap-1"
+                title="Current penalty score. Goal is 0 points to declare."
+              >
+                <span className="text-white/80">Score :</span>
+                <span className="font-mono font-black text-white">{currentHandPenalty}</span>
+              </div>
+
+              {/* REFRESH Button (calls handleAutoSortHand) */}
+              <button
+                type="button"
+                onClick={handleAutoSortHand}
+                disabled={actionLoading || myPlayer?.status === 'dropped'}
+                className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#fcd34d] to-[#f59e0b] border border-amber-300 text-black font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
+                title="Sort & Refresh Hand"
+              >
+                REFRESH
+              </button>
+            </div>
+
+            {/* Center: Bottom User Seat with Green Ring Avatar & Circular Countdown Timer */}
+            <div className="flex items-center gap-1.5 relative">
+              <div className="relative">
+                {/* Neon Green Circular Ring Avatar */}
+                <div
+                  className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full p-[2px] shadow-lg transition-all ${
+                    isMyTurn ? 'bg-[#00e676] ring-4 ring-[#00e676]/40 animate-pulse scale-105' : 'bg-[#00e676]'
+                  }`}
+                >
+                  <div className="w-full h-full rounded-full overflow-hidden bg-[#1a2233] flex items-center justify-center text-white font-black text-xs sm:text-sm">
+                    {user?.photoURL ? (
+                      <img
+                        src={user.photoURL}
+                        alt={profile?.displayName || user?.displayName || 'User'}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span>{(profile?.displayName || user?.displayName || 'U').slice(0, 2).toUpperCase()}</span>
+                    )}
+                  </div>
                 </div>
 
-                {/* 
-                  3. BOTTOM AREA (Your Seat, Hand Cards, Turn Timer & Action Bar)
-                */}
-                <div className="w-full relative z-30 shrink-0 flex flex-col items-center gap-0.5 sm:gap-1 pb-0.5">
-                  {/* Floating Toast Notification */}
-                  {toastNotification && (
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black text-xs px-4 py-1.5 rounded-full shadow-2xl animate-bounce border border-yellow-200">
-                      {toastNotification}
-                    </div>
-                  )}
-
-                  {/* Sleek Turn Status Message Bar */}
-                  {game?.status === 'PLAYING' && (
-                    <div className="flex items-center justify-center gap-2 bg-black/70 backdrop-blur-sm px-2.5 py-0.5 rounded-full border border-white/10 shrink-0">
-                      <span className={`text-[8px] sm:text-[9px] font-bold ${isMyTurn ? 'text-amber-400 animate-pulse font-extrabold' : 'text-slate-300'}`}>
-                        {isMyTurn
-                          ? !hasDrawn
-                            ? '👉 Your Turn: Draw Card'
-                            : '👉 Select Card to Discard or Declare'
-                          : `${players.find((p) => p.uid === game.turnUid)?.displayName || 'Opponent'}'s turn`}
-                      </span>
-                      <span className="font-mono text-white flex items-center gap-0.5 text-[8px] sm:text-[9px]">
-                        <Clock className="w-2.5 h-2.5 text-amber-400" />
-                        <span className={turnTimeLeft <= 10 ? 'text-rose-400 font-black animate-pulse' : 'text-amber-300'}>
-                          {turnTimeLeft}s
-                        </span>
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Multi-Card Selection Actions Bar */}
-                  {selectedCardIds.length >= 2 && (
-                    <div className="flex items-center gap-1.5 mb-1 z-40">
-                      <button
-                        type="button"
-                        onClick={handleCreateSetFromSelection}
-                        className="py-1 px-3.5 rounded-full font-black text-[10px] sm:text-xs uppercase shadow-lg flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-1 ring-amber-300 shadow-amber-500/40"
-                        title={`Group ${selectedCardIds.length} cards together`}
-                      >
-                        <Layers className="w-3.5 h-3.5 text-black" />
-                        <span>GROUP ({selectedCardIds.length})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCardIds([])}
-                        className="py-1 px-2.5 rounded-full bg-black/80 hover:bg-black text-slate-300 hover:text-white text-[9px] sm:text-[10px] font-bold border border-white/20 transition-colors cursor-pointer"
-                        title="Deselect cards"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Single Card Quick Movement Actions Bar */}
-                  {selectedCardIds.length === 1 && (
-                    <div className="flex items-center gap-1 mb-0.5 z-40 bg-black/85 backdrop-blur-md px-2.5 py-0.5 rounded-full border border-amber-500/30 shadow-lg text-[9px]">
-                      {isMyTurn && hasDrawn && (
-                        <button
-                          onClick={() => handleDiscard(selectedCardIds[0])}
-                          className="py-0.5 px-2.5 rounded-md bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black font-black uppercase text-[9px] shadow-lg animate-pulse flex items-center gap-1 cursor-pointer hover:scale-105 active:scale-95 transition-all"
-                          aria-label="Discard selected card"
-                        >
-                          <span>🗑️ Discard</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleMoveSelectedCard('left')}
-                        className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
-                        title="Move card left side"
-                        aria-label="Move card left side"
-                      >
-                        <span>← Left</span>
-                      </button>
-                      <button
-                        onClick={() => handleMoveSelectedCard('right')}
-                        className="py-0.5 px-1.5 rounded bg-white/10 hover:bg-white/20 text-white font-bold border border-white/10 flex items-center gap-0.5 cursor-pointer text-[8px]"
-                        title="Move card right side"
-                        aria-label="Move card right side"
-                      >
-                        <span>Right →</span>
-                      </button>
-                      <button
-                        onClick={() => moveCardBetweenGroups(-1, 0, -1)}
-                        className="py-0.5 px-1.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-300 font-bold border border-amber-500/30 cursor-pointer text-[8px]"
-                        title="Create new group with this card"
-                        aria-label="Create new group with this card"
-                      >
-                        <span>+ Group</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedCardIds([])}
-                        className="py-0.5 px-1 rounded text-slate-400 hover:text-white text-[8px] cursor-pointer"
-                        aria-label="Deselect card"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Player Hand Groups Spread Across Full Width of Screen */}
-                  {handGroups.length > 0 && (
-                    <div className="w-full max-w-full px-1 flex items-end justify-center gap-1 sm:gap-2 overflow-x-hidden pt-2 pb-0.5">
-                      {handGroups.map((group, groupIdx) => {
-                        const meldStatus = getGroupMeldStatus(group, wildJokerRank);
-                        const isOver = dragOverGroupIdx === groupIdx;
-
-                        return (
-                          <div
-                            key={`group-${groupIdx}`}
-                            data-drop-group={groupIdx}
-                            onDragOver={(e) => handleDragOverGroup(e, groupIdx)}
-                            onDragLeave={() => setDragOverGroupIdx(null)}
-                            onDrop={(e) => handleDropOnGroup(e, groupIdx)}
-                            className={`relative rounded-md sm:rounded-xl p-0.5 sm:p-1 transition-all duration-150 flex flex-col items-center gap-0.5 shrink-0 ${
-                              isOver
-                                ? 'ring-2 ring-amber-400 bg-amber-500/20 scale-105'
-                                : meldStatus.type === 'set'
-                                ? meldStatus.hasJoker
-                                   ? 'bg-amber-500/15 border border-amber-400 shadow shadow-amber-500/20'
-                                   : 'bg-purple-500/10 border border-purple-400/50 shadow-sm'
-                                : meldStatus.type === 'pure_seq'
-                                ? 'bg-emerald-500/10 border border-emerald-500/40 shadow-sm'
-                                : meldStatus.type === 'impure_seq'
-                                ? 'bg-teal-500/10 border border-teal-400/60 shadow-sm'
-                                : 'bg-black/40 border border-white/10'
-                            }`}
-                          >
-                            {/* Group Header Badge */}
-                            <div className="flex items-center justify-between w-full px-0.5 gap-0.5 text-[6px] min-[390px]:text-[7px] sm:text-[8px] font-bold">
-                              <span className="text-slate-400 font-mono">G{groupIdx + 1}</span>
-                              {meldStatus.type === 'set' ? (
-                                meldStatus.hasJoker ? (
-                                  <span className="px-1 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 text-black font-black shadow flex items-center gap-0.5">
-                                    ⭐ SET (+20)
-                                  </span>
-                                ) : (
-                                  <span className="px-1 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black">
-                                    ✓ SET (+20)
-                                  </span>
-                                )
-                              ) : meldStatus.type === 'pure_seq' ? (
-                                <span className="px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-black">
-                                  ✓ PURE (+20)
-                                </span>
-                              ) : meldStatus.type === 'impure_seq' ? (
-                                <span className="px-1 py-0.2 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 font-black">
-                                  ⭐ JOKER (+20)
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">({group.length})</span>
-                              )}
-                              {handGroups.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUngroup(groupIdx)}
-                                  className="text-slate-500 hover:text-rose-400 text-[6px] min-[390px]:text-[7px] transition-colors ml-0.5 cursor-pointer"
-                                  title={`Ungroup group ${groupIdx + 1}`}
-                                  aria-label={`Ungroup group ${groupIdx + 1}`}
-                                >
-                                  ✕
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Cards in Group Spread Horizontally */}
-                            <div className="flex items-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] overflow-visible px-0.5 py-0.5">
-                              {group.map((card, cardIdx) => {
-                                const isSelected = selectedCardIds.includes(card.id);
-
-                                return (
-                                  <div
-                                    key={card.id}
-                                    className="relative group/c shrink-0"
-                                    style={{
-                                      zIndex: isSelected ? 40 : cardIdx + 1,
-                                    }}
-                                    draggable={true}
-                                    onDragStart={(e) => handleDragStartCard(e, card.id, groupIdx, cardIdx)}
-                                    onTouchStart={(e) => handleTouchStartCard(e, card.id, groupIdx, cardIdx)}
-                                    onTouchMove={handleTouchMoveCard}
-                                    onTouchEnd={handleTouchEndCard}
-                                  >
-                                    <PlayingCard
-                                      card={card}
-                                      wildJokerRank={wildJokerRank}
-                                      isSelected={isSelected}
-                                      onClick={() => handleCardClick(card.id)}
-                                      size="hand"
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Drop Target to Create New Side Group (Compact on mobile) */}
-                      {handGroups.length < 5 && (
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          aria-label="Create new card group"
-                          data-drop-group={-1}
-                          onDragOver={(e) => handleDragOverGroup(e, -1)}
-                          onDrop={(e) => handleDropOnGroup(e, -1)}
-                          className="rounded-md sm:rounded-lg border border-dashed border-white/20 hover:border-amber-400/60 p-0.5 flex flex-col items-center justify-center text-[7px] sm:text-[8px] text-slate-500 hover:text-amber-300 cursor-pointer w-6 min-[390px]:w-7 sm:w-8 h-[58px] min-[390px]:h-[64px] min-[420px]:h-[70px] sm:h-[82px] md:h-[94px] shrink-0 transition-colors"
-                          title="Drag and drop card here to place as new group"
-                        >
-                          <span className="text-xs font-bold leading-none">+</span>
-                          <span className="text-[6px] min-[390px]:text-[7px]">Grp</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Fallback Single Flat Hand if handGroups empty */}
-                  {handGroups.length === 0 && myPlayer?.cards && myPlayer.cards.length > 0 && (
-                    <div className="flex items-center justify-center -space-x-[22px] min-[390px]:-space-x-[24px] min-[420px]:-space-x-[26px] sm:-space-x-[30px] md:-space-x-[32px] max-w-full overflow-x-hidden pt-2 pb-0.5 px-1">
-                      {myPlayer.cards.map((card, cardIdx) => {
-                        const isSelected = selectedCardIds.includes(card.id);
-                        return (
-                          <div
-                            key={card.id}
-                            className="relative group shrink-0"
-                            style={{
-                              zIndex: isSelected ? 40 : cardIdx + 1,
-                            }}
-                          >
-                            <PlayingCard
-                              card={card}
-                              wildJokerRank={wildJokerRank}
-                              isSelected={isSelected}
-                              onClick={() => handleCardClick(card.id)}
-                              size="hand"
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Action Controls Bar - Solid Guaranteed Visible 4-Button Dock */}
-                  {game?.status === 'PLAYING' && (() => {
-                    const dropInfo = calculateDropPenalty(
-                      game?.entryFee || 20,
-                      game?.pointValue || ((game?.entryFee || 20) / 80),
-                      myPlayer?.turnsCount || 0,
-                      isMyTurn && Boolean(hasDrawn)
-                    );
-
-                    return (
-                      <div
-                        data-testid="persistent-action-dock"
-                        className="w-full max-w-2xl mx-auto flex flex-col items-center gap-1 shrink-0 z-40 mt-0.5 px-1"
-                      >
-                        {/* Live Status Line: Hand summary & Penalty Score */}
-                        <div className="flex items-center justify-between w-full px-1 text-[8px] sm:text-[9px] leading-tight">
-                          {/* Live Hand Cards Count & Groups */}
-                          <div
-                            className="py-0.5 px-2 rounded-full bg-black/80 border border-white/10 flex items-center gap-1 font-bold text-slate-300"
-                            title="Cards in hand and group count"
-                          >
-                            <span className="text-amber-400 font-mono">♠</span>
-                            <span>Hand: <strong className="text-white font-mono">{myPlayer?.cards?.length || 13} Cards</strong></span>
-                            {handGroups.length > 1 && (
-                              <span className="text-slate-400 text-[7px] sm:text-[8px] font-mono">({handGroups.length} Grps)</span>
-                            )}
-                          </div>
-
-                          {/* Live Hand Score, Set Points & Penalty */}
-                          <div className="flex items-center gap-1.5">
-                            {liveHandEvaluation.totalMeldPoints > 0 && (
-                              <div
-                                className="py-0.5 px-2 rounded-full bg-amber-500/20 border border-amber-400/40 text-[8px] sm:text-[9px] flex items-center gap-1 text-amber-300 font-bold"
-                                title="Points awarded for valid sets & sequences (+20 Pts per valid meld)"
-                              >
-                                <span>⭐</span>
-                                <span className="font-mono font-black">+{liveHandEvaluation.totalMeldPoints} Pts</span>
-                                {liveHandEvaluation.validSetsCount > 0 && (
-                                  <span className="text-[7px] text-amber-200/80">({liveHandEvaluation.validSetsCount} Set{liveHandEvaluation.validSetsCount > 1 ? 's' : ''})</span>
-                                )}
-                              </div>
-                            )}
-
-                            <div
-                              className="py-0.5 px-2.5 rounded-full bg-black/80 border border-white/15 text-[8px] sm:text-[9px] flex items-center gap-1.5"
-                              title="Hand penalty score (Goal: 0 Pts to win)"
-                            >
-                              <span className="text-slate-400">Penalty:</span>
-                              <span className={`font-mono font-black ${currentHandPenalty === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {currentHandPenalty} Pts
-                              </span>
-                              {currentHandPenalty === 0 ? (
-                                <span className="text-emerald-300 font-bold text-[7px] hidden xs:inline">Goal Reached! 🏆</span>
-                              ) : (
-                                <span className="text-amber-300 text-[7px] hidden xs:inline">(Goal: 0 🏆)</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 4 Primary Player Action Buttons: DISCARD | DECLARE | SORT | DROP */}
-                        <div className="w-full grid grid-cols-4 gap-1 sm:gap-1.5 bg-[#0b0d14]/95 backdrop-blur-md p-1 rounded-lg sm:rounded-xl border border-amber-500/40 shadow-xl shrink-0 z-40">
-                          {/* 1. DISCARD BUTTON */}
-                          <button
-                            type="button"
-                            data-testid="dock-btn-discard"
-                            onClick={() => handleDiscard()}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className={`min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none select-none ${
-                              isMyTurn && hasDrawn && selectedCardIds.length > 0
-                                ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-black ring-2 ring-amber-300 shadow-amber-500/50 animate-pulse cursor-pointer'
-                                : isMyTurn && hasDrawn
-                                ? 'bg-gradient-to-r from-amber-600/50 to-yellow-600/50 border border-amber-400 text-amber-200 cursor-pointer animate-pulse'
-                                : isMyTurn
-                                ? 'bg-white/15 hover:bg-white/20 text-white border border-white/20 cursor-pointer'
-                                : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
-                            }`}
-                            aria-label="Discard selected card"
-                            title={
-                              !isMyTurn
-                                ? "Opponent's turn"
-                                : !hasDrawn
-                                ? 'Draw a card first'
-                                : selectedCardIds.length === 0
-                                ? 'Select card to discard'
-                                : 'Discard selected card'
-                            }
-                          >
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs sm:text-sm">🗑️</span>
-                              <span className="tracking-wide">DISCARD</span>
-                            </div>
-                            <span className="text-[7px] sm:text-[8px] mt-0.5 truncate max-w-full font-medium">
-                              {isMyTurn
-                                ? !hasDrawn
-                                  ? 'Draw 1st'
-                                  : selectedCardIds.length > 0
-                                  ? '✓ Ready'
-                                  : 'Select Card'
-                                : 'Wait'}
-                            </span>
-                          </button>
-
-                          {/* 2. DECLARE / SHOW BUTTON */}
-                          <button
-                            type="button"
-                            data-testid="dock-btn-declare"
-                            onClick={handleOpenDeclare}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className={`min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none select-none ${
-                              isMyTurn
-                                ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-black cursor-pointer shadow-emerald-500/40 ring-1 ring-emerald-300'
-                                : 'bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed opacity-50'
-                            }`}
-                            aria-label="Declare hand show"
-                            title="Declare Hand Show"
-                          >
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs sm:text-sm">🏆</span>
-                              <span className="tracking-wide">DECLARE</span>
-                            </div>
-                            <span className="text-[7px] sm:text-[8px] text-emerald-950 font-bold mt-0.5">Show Hand</span>
-                          </button>
-
-                          {/* 3. SORT BUTTON */}
-                          <button
-                            type="button"
-                            data-testid="dock-btn-sort"
-                            onClick={handleAutoSortHand}
-                            disabled={actionLoading || myPlayer?.status === 'dropped'}
-                            className="min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-purple-700/40 to-indigo-900/50 hover:from-purple-600/60 hover:to-indigo-800/70 border border-purple-500/60 text-purple-200 font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40 select-none"
-                            title="Sort cards into sequences and sets"
-                            aria-label="Sort cards into sequences and sets"
-                          >
-                            <div className="flex items-center gap-1">
-                              <ArrowUpDown className="w-3 h-3 text-amber-400" />
-                              <span className="tracking-wide">SORT</span>
-                            </div>
-                            <span className="text-[7px] sm:text-[8px] text-purple-300/80 mt-0.5">Suits</span>
-                          </button>
-
-                          {/* 4. DROP BUTTON */}
-                          <button
-                            type="button"
-                            data-testid="dock-btn-drop"
-                            onClick={() => setShowDropModal(true)}
-                            disabled={actionLoading || game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
-                            className="min-h-[42px] sm:min-h-[46px] px-1 rounded-md sm:rounded-lg bg-gradient-to-b from-rose-800/40 to-red-950/60 hover:from-rose-700/60 hover:to-red-900/80 border border-rose-500/60 text-rose-200 font-black text-[9px] sm:text-[10px] uppercase shadow-md transition-all active:scale-95 flex flex-col items-center justify-center leading-none cursor-pointer disabled:opacity-40 select-none"
-                            title="Drop hand"
-                            aria-label="Drop hand"
-                          >
-                            <span className="tracking-wide">DROP</span>
-                            <span className="text-[7px] sm:text-[8px] font-mono font-semibold text-rose-300 mt-0.5">
-                              -₹{dropInfo.penaltyRupees}
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
+                {/* Circular Countdown Timer Badge at Bottom-Left */}
+                <div
+                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#1e293b] border-2 border-cyan-400 text-cyan-300 font-mono font-black text-[8px] sm:text-[10px] flex items-center justify-center absolute -bottom-1 -left-1 shadow-md ${
+                    isMyTurn && turnTimeLeft <= 10 ? 'border-rose-500 text-rose-400 animate-pulse' : ''
+                  }`}
+                >
+                  {isMyTurn ? turnTimeLeft : (game?.status === 'PLAYING' ? turnTimeLeft : '--')}
                 </div>
               </div>
+
+              {/* Dark Pill with Username & Chip Balance */}
+              <div className="bg-black/85 backdrop-blur border border-white/10 rounded-md sm:rounded-lg px-2 py-0.5 min-w-[70px] shadow text-left">
+                <span className="block text-[9px] sm:text-[10px] font-bold text-white max-w-[85px] truncate leading-tight">
+                  {profile?.displayName || user?.displayName || 'Aaaaaaa'}
+                </span>
+                <span className="block text-[8px] sm:text-[9px] font-mono text-white/80 leading-tight">
+                  {((wallet?.depositBalance || 0) + (wallet?.winBalance || 0) + (wallet?.bonusBalance || 0) || 100000).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Right: DISCARD (when card drawn/selected) & Coral DROP Button */}
+            <div className="flex items-center gap-1.5">
+              {isMyTurn && hasDrawn && (
+                <button
+                  type="button"
+                  onClick={() => handleDiscard()}
+                  disabled={actionLoading || myPlayer?.status === 'dropped'}
+                  className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-yellow-500 border border-yellow-300 text-black font-black text-[10px] sm:text-xs uppercase shadow animate-pulse hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                  title="Discard Selected Card"
+                >
+                  DISCARD
+                </button>
+              )}
+
+              {/* Coral / Salmon DROP Button */}
+              <button
+                type="button"
+                onClick={() => setShowDropModal(true)}
+                disabled={actionLoading || game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
+                className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#e06d53] to-[#c84b31] border border-rose-300/60 text-white font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
+                title="Drop Match"
+              >
+                DROP
+              </button>
             </div>
           </div>
         </div>
@@ -1946,18 +1944,20 @@ export default function GameRoomPage() {
                 Your drop penalty has been deducted and any remaining buy-in has been refunded to your wallet.
               </p>
               <div className="pt-2 flex flex-col gap-2">
-                <Link
-                  href={`/match/stakes?format=${game?.mode || 'points'}`}
-                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-black text-xs uppercase shadow-lg shadow-emerald-500/30 transition-all flex items-center justify-center gap-1.5"
+                <button
+                  type="button"
+                  onClick={handlePlayNewMatchFromDrop}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-black text-xs uppercase shadow-lg shadow-emerald-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Play className="w-4 h-4 fill-current" /> Play New Match
-                </Link>
-                <Link
-                  href="/lobby"
-                  className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase transition-all flex items-center justify-center gap-1.5"
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReturnToLobbyFromDrop}
+                  className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" /> Return to Lobby
-                </Link>
+                </button>
               </div>
             </div>
           </div>

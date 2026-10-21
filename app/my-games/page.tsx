@@ -116,7 +116,8 @@ export default function MyGamesPage() {
               </div>
             ) : (
               filtered.map((game) => {
-                const isActive = game.status === 'PLAYING' || game.status === 'COUNTDOWN' || game.status === 'WAITING';
+                const isDropped = Array.isArray(game.droppedUids) && game.droppedUids.includes(user?.uid || '');
+                const isActive = (game.status === 'PLAYING' || game.status === 'COUNTDOWN' || game.status === 'WAITING') && !isDropped;
                 const isWon = game.winnerUid === user?.uid;
                 return (
                   <div
@@ -133,13 +134,15 @@ export default function MyGamesPage() {
                           {game.mode} RUMMY
                         </span>
                         <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold ${
-                          isActive
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse'
+                          isDropped
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : isActive
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
                             : isWon
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                             : 'bg-slate-800 text-slate-400'
                         }`}>
-                          {isActive ? game.status : isWon ? 'You Won' : 'Completed'}
+                          {isDropped ? 'Dropped' : isActive ? game.status : isWon ? 'You Won' : 'Completed'}
                         </span>
                       </div>
 
@@ -166,7 +169,7 @@ export default function MyGamesPage() {
                           href={`/game/${game.gameId}`}
                           className="py-2 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-bold text-xs"
                         >
-                          View Results
+                          {isDropped ? 'View Dropped Match' : 'View Results'}
                         </Link>
                       )}
                     </div>

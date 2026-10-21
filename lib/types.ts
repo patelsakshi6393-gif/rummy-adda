@@ -37,6 +37,7 @@ export interface UserProfile {
   photoURL?: string;
   role: 'player' | 'admin' | 'support';
   accountStatus: 'active' | 'suspended' | 'verified';
+  activeGameId?: string | null;
   createdAt: string;
   updatedAt?: string;
 }
