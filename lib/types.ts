@@ -182,6 +182,7 @@ export interface GameState {
   status: GameStatus;
   phase: GameStatus;
   countdownEndsAt?: string;
+  waitingEndsAt?: string;
   dealerUid?: string;
   wildJoker?: Card;
   turnUid?: string;

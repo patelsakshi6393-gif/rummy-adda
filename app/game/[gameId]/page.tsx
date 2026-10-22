@@ -28,6 +28,7 @@ import {
   startPracticeBotMatch,
   playBotTurn,
   calculateDropPenalty,
+  autoMatchWithBots,
 } from '@/lib/game-service';
 import {
   isPureSequence,
@@ -294,7 +295,56 @@ export default function GameRoomPage() {
     return () => unsub();
   }, [gameId, user]);
 
-  // 4. 15-second countdown timer handler — uses stable deps
+  // 3.5. Waiting countdown timer (10s) and auto-matchmaking handler
+  // "ek waiting time rakho usme agar players nhi aye to matchmaking ho jayega timer chalega or game start"
+  const [waitingTimeLeft, setWaitingTimeLeft] = useState<number>(10);
+  const autoMatchCalledRef = useRef(false);
+
+  useEffect(() => {
+    if (!game || game.status !== 'WAITING' || !user || !myPlayer) return;
+    autoMatchCalledRef.current = false;
+
+    const getTargetTime = () => {
+      if (game.waitingEndsAt) {
+        return new Date(game.waitingEndsAt).getTime();
+      }
+      if (game.createdAt) {
+        const createdMs = new Date(game.createdAt).getTime();
+        if (Date.now() - createdMs < 12000) {
+          return createdMs + 10000;
+        }
+      }
+      return Date.now() + 10000;
+    };
+
+    const targetTime = getTargetTime();
+
+    const calculateWaitDiff = () => {
+      const now = Date.now();
+      return Math.max(0, Math.ceil((targetTime - now) / 1000));
+    };
+
+    setWaitingTimeLeft(calculateWaitDiff());
+
+    const interval = setInterval(async () => {
+      const remaining = calculateWaitDiff();
+      setWaitingTimeLeft(remaining);
+
+      if (remaining <= 0 && !autoMatchCalledRef.current) {
+        autoMatchCalledRef.current = true;
+        clearInterval(interval);
+        try {
+          await autoMatchWithBots(game.gameId, user.uid);
+        } catch (err) {
+          console.error('Auto match error:', err);
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [game?.status, game?.gameId, game?.createdAt, game?.waitingEndsAt, user?.uid, !!myPlayer]);
+
+  // 4. Countdown timer handler — uses stable deps
   const countdownGameId = game?.gameId;
   const countdownStatus = game?.status;
   const countdownPhase = game?.phase;
@@ -313,8 +363,10 @@ export default function GameRoomPage() {
           const now = Date.now();
           return Math.max(0, Math.ceil((endsAt - now) / 1000));
         }
-        return 15;
+        return 5;
       };
+
+      setCountdownLeft(calculateTimeLeft());
 
       const interval = setInterval(async () => {
         const diff = calculateTimeLeft();
@@ -359,6 +411,10 @@ export default function GameRoomPage() {
     const currentTurnUid = game.turnUid || '';
 
     const isMyTurn = currentTurnUid === user?.uid;
+
+    // Immediately calculate diff so UI updates with 0 lag
+    const initialDiff = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    setTurnTimeLeft(initialDiff);
 
     const interval = setInterval(() => {
       const now = Date.now();
@@ -692,11 +748,13 @@ export default function GameRoomPage() {
   };
 
   // Open Declare Modal with grouped hand
-  const handleOpenDeclare = () => {
+  const handleOpenDeclare = (specificFinishCardId?: string) => {
     if (!game || !user || actionLoading) return;
     if (!isMyTurn) {
-      setToastNotification('👉 Declare / Show ke liye aapki turn honi chahiye!');
-      setTimeout(() => setToastNotification(null), 3000);
+      const turnPlayer = players.find((p) => p.uid === game.turnUid);
+      const turnPlayerName = turnPlayer?.displayName || 'Opponent';
+      setToastNotification(`👉 Declare / Show ke liye aapki turn honi chahiye! (Abhi ${turnPlayerName} ki turn hai)`);
+      setTimeout(() => setToastNotification(null), 3500);
       return;
     }
     if (!myPlayer?.cards || myPlayer.cards.length === 0) return;
@@ -707,8 +765,34 @@ export default function GameRoomPage() {
     // In 13-card Indian Rummy, declaring requires exactly 13 cards.
     // If the player has drawn (14 cards in hand), 1 card is discarded to the finish slot.
     if (cards.length >= 14) {
-      const selIdx = selectedCardIds.length > 0 ? cards.findIndex((c) => c.id === selectedCardIds[0]) : -1;
-      const finishIdx = selIdx !== -1 ? selIdx : cards.length - 1;
+      let finishIdx = -1;
+      const targetCardId = specificFinishCardId || (selectedCardIds.length > 0 ? selectedCardIds[0] : null);
+      if (targetCardId) {
+        const candidateIdx = cards.findIndex((c) => c.id === targetCardId);
+        if (candidateIdx !== -1) {
+          const testRemaining = cards.filter((_, idx) => idx !== candidateIdx);
+          const val = validateDeclaration(findBestMelds(testRemaining, wildJokerRank), wildJokerRank);
+          if (val.isValid) {
+            finishIdx = candidateIdx;
+          }
+        }
+      }
+      if (finishIdx === -1) {
+        // Automatically check if any card, when removed, leaves a valid winning 13-card hand
+        for (let i = cards.length - 1; i >= 0; i--) {
+          const testRemaining = cards.filter((_, idx) => idx !== i);
+          const testMelds = findBestMelds(testRemaining, wildJokerRank);
+          const val = validateDeclaration(testMelds, wildJokerRank);
+          if (val.isValid) {
+            finishIdx = i;
+            break;
+          }
+        }
+      }
+      if (finishIdx === -1) {
+        const candidateIdx = targetCardId ? cards.findIndex((c) => c.id === targetCardId) : -1;
+        finishIdx = candidateIdx !== -1 ? candidateIdx : cards.length - 1;
+      }
       finishCard = cards[finishIdx];
       meldCards = cards.filter((_, idx) => idx !== finishIdx);
     }
@@ -721,12 +805,20 @@ export default function GameRoomPage() {
       .filter((g) => g.length > 0);
     const totalCount = userGroupsWithoutFinish.reduce((acc, g) => acc + g.length, 0);
 
+    let chosenGroups: Card[][] = [];
     if (totalCount === 13 && userGroupsWithoutFinish.length >= 2) {
-      setDeclareGroups(userGroupsWithoutFinish);
+      const userVal = validateDeclaration(userGroupsWithoutFinish, wildJokerRank);
+      if (userVal.isValid) {
+        chosenGroups = userGroupsWithoutFinish;
+      } else {
+        const bestMelds = findBestMelds(meldCards, wildJokerRank);
+        const bestVal = validateDeclaration(bestMelds, wildJokerRank);
+        chosenGroups = bestVal.isValid ? bestMelds : userGroupsWithoutFinish;
+      }
     } else {
-      const bestMelds = findBestMelds(meldCards, wildJokerRank);
-      setDeclareGroups(bestMelds);
+      chosenGroups = findBestMelds(meldCards, wildJokerRank);
     }
+    setDeclareGroups(chosenGroups);
     setShowDeclareModal(true);
   };
 
@@ -953,6 +1045,21 @@ export default function GameRoomPage() {
     setHandGroups(validMelds);
     setSelectedCardIds([]);
     soundManager.playCardDraw();
+
+    const evalResult = calculateLiveHandScore(validMelds, wildJokerRank);
+    if (evalResult.score === 0 || evalResult.isWinningHand) {
+      if (isMyTurn) {
+        setToastNotification('🎉 Hand sorted! Score: 0 • Declare window khul raha hai...');
+        setTimeout(() => {
+          handleOpenDeclare();
+        }, 250);
+      } else {
+        const turnPlayer = players.find((p) => p.uid === game?.turnUid);
+        const turnPlayerName = turnPlayer?.displayName || 'Opponent';
+        setToastNotification(`🎉 Hand sorted! Score: 0 • ${turnPlayerName} ke baad aapki turn aate hi "DECLARE" daba kar win karein!`);
+      }
+      setTimeout(() => setToastNotification(null), 4000);
+    }
   };
 
   const handleConfirmDeclare = async () => {
@@ -976,6 +1083,143 @@ export default function GameRoomPage() {
   // Up to 5 opponent slots for a 6-player table
   const opponents = players.filter((p) => p.uid !== user?.uid);
   const opponentSlots = [0, 1, 2, 3, 4]; // 5 potential opponent seats
+
+  // Helper to render any opponent seat with accurate turn indicator, timer badge and waiting state
+  const renderOpponentSeat = (opp: GamePlayerState | undefined, slotIdx: number, orientation: 'left' | 'right' | 'center') => {
+    const isOppTurn = Boolean(opp && game?.status === 'PLAYING' && game?.turnUid === opp.uid);
+    const isWaitingRoom = game?.status === 'WAITING';
+
+    if (!opp) {
+      if (isWaitingRoom) {
+        return (
+          <div className="flex items-center gap-1 sm:gap-1.5 opacity-85 animate-pulse">
+            {orientation === 'right' ? (
+              <>
+                <div className="bg-black/80 border border-amber-500/40 rounded-full px-2 py-0.5 text-amber-300 text-[8px] sm:text-[9px] font-bold shadow flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  <span>Waiting...</span>
+                </div>
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-amber-500/20 border border-amber-400/50 shadow-md flex items-center justify-center">
+                  <Users className="w-3.5 h-3.5 text-amber-300" />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-amber-500/20 border border-amber-400/50 shadow-md flex items-center justify-center">
+                  <Users className="w-3.5 h-3.5 text-amber-300" />
+                </div>
+                <div className="bg-black/80 border border-amber-500/40 rounded-full px-2 py-0.5 text-amber-300 text-[8px] sm:text-[9px] font-bold shadow flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  <span>Waiting...</span>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex items-center gap-1 opacity-45 pointer-events-none">
+          {orientation === 'right' ? (
+            <>
+              <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white/70 text-[8px] sm:text-[9px] font-medium shadow">
+                Empty seat
+              </div>
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/10 border border-white/20 shadow-md flex items-center justify-center">
+                <Users className="w-3.5 h-3.5 text-slate-400" />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/10 border border-white/20 shadow-md flex items-center justify-center">
+                <Users className="w-3.5 h-3.5 text-slate-400" />
+              </div>
+              <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white/70 text-[8px] sm:text-[9px] font-medium shadow">
+                Empty seat
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // Player is seated!
+    const avatarSize = slotIdx === 0 ? 'w-9 h-9 sm:w-11 sm:h-11' : 'w-7 h-7 sm:w-8 sm:h-8';
+    const avatarRing = isOppTurn
+      ? 'bg-[#00e676] ring-4 ring-[#00e676]/60 shadow-lg shadow-emerald-500/50 scale-105 animate-pulse'
+      : 'bg-[#00e676]';
+
+    const avatarContent = (
+      <div className="relative shrink-0">
+        <div className={`${avatarSize} rounded-full p-[2px] shadow-lg transition-all ${avatarRing}`}>
+          <div className="w-full h-full rounded-full overflow-hidden bg-[#1a2233] flex items-center justify-center text-white font-black text-[10px] sm:text-xs">
+            {opp.photoURL ? (
+              <img src={opp.photoURL} alt={opp.displayName} className="w-full h-full object-cover" />
+            ) : (
+              <span>{opp.displayName?.slice(0, 2).toUpperCase() || 'P'}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Dealer "D" Badge */}
+        {opp.isDealer && (
+          <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#f59e0b] border border-black/40 text-black font-black text-[8px] sm:text-[9px] flex items-center justify-center shadow absolute -top-1 -right-1 z-20">
+            D
+          </div>
+        )}
+
+        {/* Active Turn Countdown Timer Badge: ONLY when isOppTurn! */}
+        {isOppTurn && (
+          <div
+            className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#1e293b] border-2 font-mono font-black text-[8px] sm:text-[10px] flex items-center justify-center absolute -bottom-1 -left-1 sm:-bottom-1.5 sm:-left-1.5 shadow-lg z-20 ${
+              turnTimeLeft <= 10 ? 'border-rose-500 text-rose-400 animate-pulse' : 'border-cyan-400 text-cyan-300'
+            }`}
+          >
+            {turnTimeLeft}
+          </div>
+        )}
+      </div>
+    );
+
+    const infoPill = (
+      <div
+        className={`bg-black/85 backdrop-blur border rounded-md sm:rounded-lg px-1.5 sm:px-2 py-0.5 min-w-[65px] sm:min-w-[75px] shadow text-left shrink-0 ${
+          isOppTurn ? 'border-emerald-400 ring-1 ring-emerald-400/40' : 'border-white/10'
+        }`}
+      >
+        <span className="block text-[8px] sm:text-[10px] font-bold text-white max-w-[80px] truncate leading-tight">
+          {opp.displayName || 'Player'}
+        </span>
+        <span className="block text-[7px] sm:text-[9px] font-mono text-white/70 leading-tight">
+          {opp.status === 'dropped' ? (
+            <span className="text-rose-400 font-bold">Dropped</span>
+          ) : opp.status === 'eliminated' ? (
+            <span className="text-rose-400 font-bold">Eliminated</span>
+          ) : isOppTurn ? (
+            <span className="text-emerald-400 font-bold">Turn: {turnTimeLeft}s</span>
+          ) : (
+            <span>{opp.cardCount || 13} Cards</span>
+          )}
+        </span>
+      </div>
+    );
+
+    return (
+      <div className="flex items-center gap-1 sm:gap-1.5 relative pointer-events-auto">
+        {orientation === 'right' ? (
+          <>
+            {infoPill}
+            {avatarContent}
+          </>
+        ) : (
+          <>
+            {avatarContent}
+            {infoPill}
+          </>
+        )}
+      </div>
+    );
+  };
 
   if (playersLoaded && !myPlayer && game && game.status !== 'RESULT' && game.status !== 'COMPLETED') {
     return (
@@ -1123,194 +1367,68 @@ export default function GameRoomPage() {
               </div>
 
               {/* 
-                1. TOP SEATS & EMPTY SEATS ROW (Exact Placement matching screenshot)
+                1. TOP SEATS & EMPTY SEATS ROW (Exact Placement matching luxury table layout)
               */}
               <div className="w-full relative z-20 flex items-center justify-between px-2 sm:px-6 pt-0.5 shrink-0">
-                {/* Top-Left Empty Seat (or Opponent 2) */}
-                <div className="flex items-center gap-1.5 pointer-events-none">
-                  {opponents[1] ? (
-                    <div className="flex items-center gap-1">
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
-                        <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
-                          {opponents[1].displayName?.slice(0, 2).toUpperCase() || 'P'}
-                        </div>
-                      </div>
-                      <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[60px] truncate">
-                        {opponents[1].displayName}
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
-                        <Users className="w-3.5 h-3.5 text-slate-400" />
-                      </div>
-                      <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
-                        Empty seat
-                      </div>
-                    </>
-                  )}
+                {/* Top-Left Seat (Opponent 2) */}
+                <div className="flex items-center">
+                  {renderOpponentSeat(opponents[1], 1, 'left')}
                 </div>
 
-                {/* Top-Center Main Opponent Seat (with Green Ring & Dealer "D" Badge) */}
-                <div className="flex items-center gap-1.5">
-                  {opponents[0] ? (
-                    (() => {
-                      const opp = opponents[0];
-                      const isOppTurn = game?.turnUid === opp.uid;
-                      return (
-                        <div className="flex items-center gap-1.5 relative">
-                          <div className="relative">
-                            {/* Vibrant Green Circular Ring */}
-                            <div
-                              className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full p-[2.5px] shadow-lg transition-all ${
-                                isOppTurn ? 'bg-[#00e676] ring-4 ring-[#00e676]/40 animate-pulse scale-105' : 'bg-[#00e676]'
-                              }`}
-                            >
-                              <div className="w-full h-full rounded-full overflow-hidden bg-[#1a2233] flex items-center justify-center text-white font-black text-xs sm:text-sm">
-                                {opp.photoURL ? (
-                                  <img src={opp.photoURL} alt={opp.displayName} className="w-full h-full object-cover" />
-                                ) : (
-                                  <span>{opp.displayName?.slice(0, 2).toUpperCase() || 'P'}</span>
-                                )}
-                              </div>
-                            </div>
-                            {/* Dealer "D" Badge */}
-                            {opp.isDealer && (
-                              <div className="w-4 h-4 rounded-full bg-[#f59e0b] border border-black/40 text-black font-black text-[9px] flex items-center justify-center shadow absolute -top-1 -right-1">
-                                D
-                              </div>
-                            )}
-                          </div>
-                          {/* Dark Rectangular Pill with Name & Balance/Cards */}
-                          <div className="bg-black/85 backdrop-blur border border-white/10 rounded-md sm:rounded-lg px-2 py-0.5 min-w-[70px] shadow text-left">
-                            <span className="block text-[9px] sm:text-[10px] font-bold text-white max-w-[85px] truncate leading-tight">
-                              {opp.displayName || '82929581'}
-                            </span>
-                            <span className="block text-[8px] sm:text-[9px] font-mono text-white/70 leading-tight">
-                              {opp.status === 'dropped' ? (
-                                <span className="text-rose-400 font-bold">Dropped</span>
-                              ) : opp.status === 'eliminated' ? (
-                                <span className="text-rose-400 font-bold">Eliminated</span>
-                              ) : (
-                                <span>{opp.cardCount || 13} Cards</span>
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()
-                  ) : (
-                    /* Waiting state top avatar */
-                    <div className="flex items-center gap-1.5 opacity-60">
-                      <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full p-[2px] bg-[#00e676]/50 shadow flex items-center justify-center">
-                        <Users className="w-5 h-5 text-white/80" />
-                      </div>
-                      <div className="bg-black/75 rounded-md px-2 py-0.5 text-[8px] text-white">
-                        Waiting...
-                      </div>
-                    </div>
-                  )}
+                {/* Top-Center Main Opponent Seat (Opponent 1) */}
+                <div className="flex items-center">
+                  {renderOpponentSeat(opponents[0], 0, 'left')}
                 </div>
 
-                {/* Top-Right Empty Seat (or Opponent 3) */}
-                <div className="flex items-center gap-1.5 pointer-events-none">
-                  {opponents[2] ? (
-                    <div className="flex items-center gap-1">
-                      <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[60px] truncate">
-                        {opponents[2].displayName}
-                      </span>
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
-                        <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
-                          {opponents[2].displayName?.slice(0, 2).toUpperCase() || 'P'}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
-                        Empty seat
-                      </div>
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
-                        <Users className="w-3.5 h-3.5 text-slate-400" />
-                      </div>
-                    </>
-                  )}
+                {/* Top-Right Seat (Opponent 3) */}
+                <div className="flex items-center">
+                  {renderOpponentSeat(opponents[2], 2, 'right')}
                 </div>
               </div>
 
-              {/* Middle Table Side Seats (Mid-Left & Mid-Right Empty Seats) */}
-              <div className="absolute inset-y-0 left-1 sm:left-3 flex items-center pointer-events-none z-10">
-                {opponents[3] ? (
-                  <div className="flex items-center gap-1 pointer-events-auto">
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
-                      <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
-                        {opponents[3].displayName?.slice(0, 2).toUpperCase() || 'P'}
-                      </div>
-                    </div>
-                    <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[55px] truncate">
-                      {opponents[3].displayName}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
-                      <Users className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                    <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
-                      Empty seat
-                    </div>
-                  </div>
-                )}
+              {/* Middle Table Side Seats (Mid-Left & Mid-Right Seats) */}
+              <div className="absolute inset-y-0 left-1 sm:left-3 flex items-center z-10">
+                {renderOpponentSeat(opponents[3], 3, 'left')}
               </div>
 
-              <div className="absolute inset-y-0 right-1 sm:right-3 flex items-center pointer-events-none z-10">
-                {opponents[4] ? (
-                  <div className="flex items-center gap-1 pointer-events-auto">
-                    <span className="bg-black/80 px-2 py-0.5 rounded-full text-[8px] text-white font-medium max-w-[55px] truncate">
-                      {opponents[4].displayName}
-                    </span>
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full p-[2px] bg-[#00e676] shadow">
-                      <div className="w-full h-full rounded-full bg-slate-800 text-white flex items-center justify-center text-[9px] font-bold">
-                        {opponents[4].displayName?.slice(0, 2).toUpperCase() || 'P'}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <div className="bg-black/80 border border-white/10 rounded-full px-2 py-0.5 text-white text-[8px] sm:text-[9px] font-medium shadow">
-                      Empty seat
-                    </div>
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white shadow-md flex items-center justify-center">
-                      <Users className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </div>
-                )}
+              <div className="absolute inset-y-0 right-1 sm:right-3 flex items-center z-10">
+                {renderOpponentSeat(opponents[4], 4, 'right')}
               </div>
 
               {/* 
                 2. CENTER PLAY AREA (Closed Deck + Wild Joker under + FINISH SLOT + Open Deck + Blue Badge)
               */}
               <div className="flex-1 flex items-center justify-center gap-4 sm:gap-8 md:gap-12 relative z-20 my-auto py-1">
-                {/* WAITING ROOM (when waiting for real players) */}
+                {/* WAITING ROOM (when waiting for players) */}
                 {game?.status === 'WAITING' && (
-                  <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-3 sm:py-5 rounded-2xl text-center space-y-2 shadow-2xl max-w-sm w-full">
+                  <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl text-center space-y-2 shadow-2xl max-w-xs sm:max-w-sm w-full animate-in fade-in zoom-in-95 duration-200">
                     <div className="flex items-center justify-center gap-2 text-amber-400">
                       <Users className="w-4 h-4 animate-pulse" />
                       <span className="font-extrabold text-xs uppercase tracking-wider">
-                        Waiting for Players ({players.length}/6)
+                        Matchmaking ({players.length}/6 Players)
                       </span>
                     </div>
-                    <div className="py-1 space-y-1.5">
-                      <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-                      <p className="text-[11px] text-slate-200 font-semibold">
-                        Waiting for opponent to connect...
+
+                    {/* Circular Countdown Timer */}
+                    <div className="py-1 flex flex-col items-center justify-center gap-1">
+                      <div className="w-12 h-12 rounded-full border-3 border-amber-400 border-t-transparent flex items-center justify-center animate-spin relative">
+                        <span className="font-mono font-black text-xl text-amber-300">
+                          {waitingTimeLeft}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-200 font-semibold mt-1">
+                        Searching for online players...
+                      </p>
+                      <p className="text-[9px] text-amber-300/80 font-mono">
+                        Auto-matching starts in {waitingTimeLeft}s
                       </p>
                     </div>
+
                     <button
                       type="button"
                       onClick={handleLeaveQueue}
                       disabled={leavingQueue}
-                      className="w-full py-1.5 px-3 rounded-lg bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-[10px] border border-white/10 transition-colors"
+                      className="w-full py-1.5 px-3 rounded-lg bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-[10px] border border-white/10 transition-colors cursor-pointer"
                     >
                       {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
                     </button>
@@ -1361,20 +1479,37 @@ export default function GameRoomPage() {
                       </div>
                     </div>
 
-                    {/* Middle: FINISH SLOT */}
+                    {/* Middle: FINISH / DECLARE SLOT */}
                     <div
                       role="button"
                       tabIndex={0}
                       aria-label="Finish slot. Declare or show hand here."
-                      onClick={handleOpenDeclare}
-                      className="w-11 h-16 min-[390px]:w-12 min-[390px]:h-17 sm:w-15 sm:h-21 rounded-lg bg-[#0b3319] border-2 border-dashed border-emerald-400/60 hover:border-emerald-300 hover:bg-[#104222] shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 group"
-                      title="FINISH SLOT - Declare Hand Show"
+                      onClick={() => handleOpenDeclare()}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const cardId = e.dataTransfer.getData('text/plain');
+                        if (cardId) {
+                          setSelectedCardIds([cardId]);
+                        }
+                        handleOpenDeclare(cardId || undefined);
+                      }}
+                      className={`w-11 h-16 min-[390px]:w-12 min-[390px]:h-17 sm:w-15 sm:h-21 rounded-lg bg-[#0b3319] border-2 border-dashed shadow-xl flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 group ${
+                        currentHandPenalty === 0 && isMyTurn
+                          ? 'border-emerald-300 ring-4 ring-emerald-400/60 shadow-emerald-400/50 animate-pulse bg-[#104222]'
+                          : 'border-emerald-400/60 hover:border-emerald-300 hover:bg-[#104222]'
+                      }`}
+                      title="FINISH SLOT - Click or Drag Card Here to Declare Hand"
                     >
-                      <span className="text-[8px] sm:text-[10px] font-black text-emerald-300 group-hover:text-white uppercase tracking-widest leading-tight">
-                        FINISH
+                      <span className="text-[8px] sm:text-[10px] text-amber-300 mb-0.5">🏆</span>
+                      <span className="text-[7px] sm:text-[9px] font-black text-emerald-300 group-hover:text-white uppercase tracking-wider leading-tight">
+                        DECLARE
                       </span>
-                      <span className="text-[7px] sm:text-[9px] font-bold text-emerald-400/80 group-hover:text-emerald-200 uppercase tracking-widest leading-tight">
-                        SLOT
+                      <span className="text-[6px] sm:text-[8px] font-bold text-emerald-400/80 group-hover:text-emerald-200 uppercase tracking-widest leading-tight">
+                        FINISH
                       </span>
                     </div>
 
@@ -1435,6 +1570,23 @@ export default function GameRoomPage() {
                   </div>
                 )}
 
+                {/* 0-Score Winning Hand Announcement Banner with Direct Declare Trigger */}
+                {currentHandPenalty === 0 && myPlayer?.status !== 'dropped' && game?.status === 'PLAYING' && (
+                  <div className="mb-1 z-40 bg-gradient-to-r from-emerald-600/90 via-teal-600/90 to-emerald-600/90 backdrop-blur-md border border-emerald-300/70 text-white px-3 py-1 rounded-full shadow-xl shadow-emerald-500/30 flex items-center gap-2 animate-pulse">
+                    <span className="text-xs">🏆</span>
+                    <span className="text-[10px] sm:text-xs font-black tracking-wide">
+                      {isMyTurn ? 'Hand Complete! Score: 0' : 'Score: 0 — Ready to Win!'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDeclare()}
+                      className="ml-1 px-2.5 py-0.5 rounded-full bg-amber-400 hover:bg-amber-300 text-black font-black text-[9px] sm:text-[10px] uppercase shadow active:scale-95 transition-transform cursor-pointer"
+                    >
+                      DECLARE NOW ➜
+                    </button>
+                  </div>
+                )}
+
                 {/* Multi-Card Selection Actions Bar */}
                 {selectedCardIds.length >= 2 && (
                   <div className="flex items-center gap-2 mb-1 z-40">
@@ -1465,6 +1617,16 @@ export default function GameRoomPage() {
                         className="py-0.5 px-2.5 rounded bg-gradient-to-r from-amber-400 to-amber-500 text-black font-black uppercase text-[9px] shadow animate-pulse flex items-center gap-1 cursor-pointer active:scale-95"
                       >
                         <span>🗑️ Discard</span>
+                      </button>
+                    )}
+                    {isMyTurn && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeclare(selectedCardIds[0])}
+                        className="py-0.5 px-2 rounded bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-black uppercase text-[9px] shadow flex items-center gap-1 cursor-pointer active:scale-95"
+                        title="Declare hand using this card as finish discard"
+                      >
+                        <span>🏆 Declare</span>
                       </button>
                     )}
                     <button
@@ -1623,36 +1785,68 @@ export default function GameRoomPage() {
             Score pill + REFRESH button on left | User seat in center | DISCARD + DROP on right
           */}
           <div className="w-full bg-[#0a0a0c]/95 border-t border-white/10 px-2 sm:px-4 py-1 sm:py-1.5 flex items-center justify-between z-40 shrink-0 h-12 sm:h-14">
-            {/* Left: Score Pill & Golden REFRESH Button */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Left: Score Pill, Golden SORT Button & Quick DECLARE Button right beside it */}
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               {/* Score : XX Pill */}
               <div
-                className="px-2.5 sm:px-3 py-1 rounded-full bg-black/90 border border-white/40 text-white text-[11px] sm:text-xs font-bold shadow flex items-center gap-1"
+                className={`px-2 sm:px-3 py-1 rounded-full border text-[10px] sm:text-xs font-bold shadow flex items-center gap-1 transition-all ${
+                  currentHandPenalty === 0
+                    ? 'bg-emerald-950/90 border-emerald-400 text-emerald-300 ring-2 ring-emerald-500/40'
+                    : 'bg-black/90 border-white/40 text-white'
+                }`}
                 title="Current penalty score. Goal is 0 points to declare."
               >
-                <span className="text-white/80">Score :</span>
+                <span className={currentHandPenalty === 0 ? 'text-emerald-300' : 'text-white/80'}>Score :</span>
                 <span className="font-mono font-black text-white">{currentHandPenalty}</span>
               </div>
 
-              {/* REFRESH Button (calls handleAutoSortHand) */}
+              {/* SORT Button (previously named REFRESH) */}
               <button
                 type="button"
                 onClick={handleAutoSortHand}
                 disabled={actionLoading || myPlayer?.status === 'dropped'}
-                className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#fcd34d] to-[#f59e0b] border border-amber-300 text-black font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
-                title="Sort & Refresh Hand"
+                className="px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#fcd34d] to-[#f59e0b] border border-amber-300 text-black font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
+                title="Sort & Group Hand"
               >
-                REFRESH
+                SORT
               </button>
+
+              {/* 🏆 DECLARE Button: Placed right next to SORT */}
+              {game?.status === 'PLAYING' && myPlayer?.status !== 'dropped' && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenDeclare()}
+                  disabled={actionLoading}
+                  className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-lg font-black text-[10px] sm:text-xs uppercase shadow transition-all cursor-pointer flex items-center gap-1 ${
+                    currentHandPenalty === 0 && isMyTurn
+                      ? 'bg-gradient-to-r from-emerald-500 via-green-400 to-teal-400 border border-emerald-300 text-black shadow-lg shadow-emerald-500/50 animate-pulse hover:scale-105 active:scale-95'
+                      : isMyTurn && hasDrawn
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 border border-emerald-400 text-white hover:brightness-110 active:scale-95 shadow-md'
+                      : currentHandPenalty === 0
+                      ? 'bg-emerald-700/80 border border-emerald-400/60 text-emerald-100 hover:brightness-110 animate-pulse'
+                      : 'bg-emerald-950/70 border border-emerald-600/40 text-emerald-300 hover:text-white hover:border-emerald-500 active:scale-95'
+                  }`}
+                  title={
+                    currentHandPenalty === 0
+                      ? 'Score is 0! Click to Declare Hand and Win'
+                      : isMyTurn
+                      ? 'Declare Hand Show'
+                      : 'Declare Hand (Available on your turn)'
+                  }
+                >
+                  <span className="text-xs">🏆</span>
+                  <span>DECLARE</span>
+                </button>
+              )}
             </div>
 
-            {/* Center: Bottom User Seat with Green Ring Avatar & Circular Countdown Timer */}
-            <div className="flex items-center gap-1.5 relative">
-              <div className="relative">
+            {/* Center: Bottom User Seat with Green Ring Avatar & Circular Countdown Timer (ONLY when isMyTurn) */}
+            <div className="flex items-center gap-1 sm:gap-1.5 relative shrink min-w-0">
+              <div className="relative shrink-0">
                 {/* Neon Green Circular Ring Avatar */}
                 <div
-                  className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full p-[2px] shadow-lg transition-all ${
-                    isMyTurn ? 'bg-[#00e676] ring-4 ring-[#00e676]/40 animate-pulse scale-105' : 'bg-[#00e676]'
+                  className={`w-8 h-8 sm:w-11 sm:h-11 rounded-full p-[2px] shadow-lg transition-all ${
+                    isMyTurn ? 'bg-[#00e676] ring-4 ring-[#00e676]/60 shadow-lg shadow-emerald-500/50 animate-pulse scale-105' : 'bg-[#00e676]'
                   }`}
                 >
                   <div className="w-full h-full rounded-full overflow-hidden bg-[#1a2233] flex items-center justify-center text-white font-black text-xs sm:text-sm">
@@ -1668,35 +1862,52 @@ export default function GameRoomPage() {
                   </div>
                 </div>
 
-                {/* Circular Countdown Timer Badge at Bottom-Left */}
-                <div
-                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#1e293b] border-2 border-cyan-400 text-cyan-300 font-mono font-black text-[8px] sm:text-[10px] flex items-center justify-center absolute -bottom-1 -left-1 shadow-md ${
-                    isMyTurn && turnTimeLeft <= 10 ? 'border-rose-500 text-rose-400 animate-pulse' : ''
-                  }`}
-                >
-                  {isMyTurn ? turnTimeLeft : (game?.status === 'PLAYING' ? turnTimeLeft : '--')}
-                </div>
+                {/* Dealer "D" Badge */}
+                {myPlayer?.isDealer && (
+                  <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#f59e0b] border border-black/40 text-black font-black text-[8px] sm:text-[9px] flex items-center justify-center shadow absolute -top-1 -right-1 z-20">
+                    D
+                  </div>
+                )}
+
+                {/* Circular Countdown Timer Badge at Bottom-Left: ONLY when isMyTurn! */}
+                {isMyTurn && (
+                  <div
+                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#1e293b] border-2 font-mono font-black text-[8px] sm:text-[10px] flex items-center justify-center absolute -bottom-1 -left-1 shadow-lg z-20 ${
+                      turnTimeLeft <= 10 ? 'border-rose-500 text-rose-400 animate-pulse' : 'border-cyan-400 text-cyan-300'
+                    }`}
+                  >
+                    {turnTimeLeft}
+                  </div>
+                )}
               </div>
 
-              {/* Dark Pill with Username & Chip Balance */}
-              <div className="bg-black/85 backdrop-blur border border-white/10 rounded-md sm:rounded-lg px-2 py-0.5 min-w-[70px] shadow text-left">
-                <span className="block text-[9px] sm:text-[10px] font-bold text-white max-w-[85px] truncate leading-tight">
-                  {profile?.displayName || user?.displayName || 'Aaaaaaa'}
+              {/* Dark Pill with Username & Chip Balance / Turn status */}
+              <div
+                className={`hidden min-[400px]:block bg-black/85 backdrop-blur border rounded-md sm:rounded-lg px-1.5 sm:px-2 py-0.5 max-w-[65px] sm:max-w-[85px] shadow text-left shrink min-w-0 ${
+                  isMyTurn ? 'border-emerald-400 ring-1 ring-emerald-400/40' : 'border-white/10'
+                }`}
+              >
+                <span className="block text-[8px] sm:text-[10px] font-bold text-white max-w-[85px] truncate leading-tight">
+                  {profile?.displayName || user?.displayName || 'User'}
                 </span>
-                <span className="block text-[8px] sm:text-[9px] font-mono text-white/80 leading-tight">
-                  {((wallet?.depositBalance || 0) + (wallet?.winBalance || 0) + (wallet?.bonusBalance || 0) || 100000).toLocaleString()}
+                <span className="block text-[7px] sm:text-[9px] font-mono text-white/80 leading-tight truncate">
+                  {isMyTurn ? (
+                    <span className="text-emerald-400 font-bold">Your Turn</span>
+                  ) : (
+                    ((wallet?.depositBalance || 0) + (wallet?.winBalance || 0) + (wallet?.bonusBalance || 0) || 100000).toLocaleString()
+                  )}
                 </span>
               </div>
             </div>
 
-            {/* Right: DISCARD (when card drawn/selected) & Coral DROP Button */}
-            <div className="flex items-center gap-1.5">
+            {/* Right: DISCARD & Coral DROP Button */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               {isMyTurn && hasDrawn && (
                 <button
                   type="button"
                   onClick={() => handleDiscard()}
                   disabled={actionLoading || myPlayer?.status === 'dropped'}
-                  className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-yellow-500 border border-yellow-300 text-black font-black text-[10px] sm:text-xs uppercase shadow animate-pulse hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                  className="px-2 sm:px-3.5 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-yellow-500 border border-yellow-300 text-black font-black text-[10px] sm:text-xs uppercase shadow hover:scale-105 active:scale-95 transition-all cursor-pointer"
                   title="Discard Selected Card"
                 >
                   DISCARD
@@ -1708,7 +1919,7 @@ export default function GameRoomPage() {
                 type="button"
                 onClick={() => setShowDropModal(true)}
                 disabled={actionLoading || game?.status !== 'PLAYING' || myPlayer?.status === 'dropped'}
-                className="px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#e06d53] to-[#c84b31] border border-rose-300/60 text-white font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
+                className="px-2 sm:px-3.5 py-1 sm:py-1.5 rounded-lg bg-gradient-to-b from-[#e06d53] to-[#c84b31] border border-rose-300/60 text-white font-black text-[10px] sm:text-xs uppercase shadow hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40"
                 title="Drop Match"
               >
                 DROP

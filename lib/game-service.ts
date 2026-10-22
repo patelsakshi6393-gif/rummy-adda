@@ -420,6 +420,7 @@ export async function findMatch(
       playerUids: [currentUid],
       status: 'WAITING',
       phase: 'WAITING',
+      waitingEndsAt: new Date(Date.now() + 10000).toISOString(),
       openDeck: [],
       closedDeckCount: 108,
       createdAt: new Date().toISOString(),
@@ -673,6 +674,7 @@ export async function joinTable(tableId: string, profile: UserProfile): Promise<
         playerUids: [profile.uid],
         status: 'WAITING',
         phase: 'WAITING',
+        waitingEndsAt: new Date(Date.now() + 10000).toISOString(),
         openDeck: [],
         closedDeckCount: 108,
         createdAt: new Date().toISOString(),
@@ -1439,6 +1441,73 @@ export async function startPracticeBotMatch(
       console.warn('Practice match start:', e);
     }
   }, 1200);
+}
+
+/**
+ * Auto-matches a waiting table with realistic AI opponent(s) when waiting timeout expires
+ * "ek waiting time rakho usme agar players nhi aye to matchmaking ho jayega timer chalega or game start"
+ */
+export async function autoMatchWithBots(gameId: string, currentUserUid: string): Promise<void> {
+  const gameRef = doc(db, 'games', gameId);
+  const playersRef = collection(db, 'games', gameId, 'players');
+
+  await runTransaction(db, async (tx) => {
+    const gameSnap = await tx.get(gameRef);
+    if (!gameSnap.exists()) return;
+    const gData = gameSnap.data() as GameState;
+
+    // Only auto-match if table is still in WAITING phase
+    if (gData.status !== 'WAITING') return;
+
+    const pSnap = await tx.get(playersRef);
+    const existingPlayers = pSnap.docs.map((d) => d.data() as GamePlayerState);
+
+    // If already has 2 or more players, transition straight to COUNTDOWN
+    if (existingPlayers.length >= 2) {
+      tx.update(gameRef, {
+        status: 'COUNTDOWN',
+        phase: 'COUNTDOWN',
+        countdownEndsAt: new Date(Date.now() + 5000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // Add realistic AI bot opponent
+    const botNames = ['Karan_Pro', 'Rahul_Ace', 'Vikram_Rummy', 'Priya_Master', 'Aman_Champ', 'Suresh_K', 'Deepak_07', 'Neha_Sharma', 'Arjun_King'];
+    const botName = botNames[Math.floor(Math.random() * botNames.length)];
+    const botUid = `bot_${Date.now()}`;
+    const botRef = doc(db, 'games', gameId, 'players', botUid);
+
+    const botPlayer: GamePlayerState = {
+      uid: botUid,
+      playerId: `RA-${Math.floor(100000 + Math.random() * 900000)}`,
+      displayName: botName,
+      photoURL: '',
+      seatIndex: 1,
+      status: 'waiting',
+      cardCount: 0,
+      score: 0,
+      connected: true,
+      entryPaid: 0,
+      isBot: true,
+      joinedAt: new Date().toISOString(),
+    };
+    tx.set(botRef, botPlayer);
+
+    const existingUids = Array.isArray(gData.playerUids) ? gData.playerUids : [currentUserUid];
+    const allUids = Array.from(new Set([...existingUids, botUid]));
+
+    const countdownEndsAt = new Date(Date.now() + 5000).toISOString();
+    tx.update(gameRef, {
+      playerCount: allUids.length,
+      playerUids: allUids,
+      status: 'COUNTDOWN',
+      phase: 'COUNTDOWN',
+      countdownEndsAt,
+      updatedAt: new Date().toISOString(),
+    });
+  });
 }
 
 /**

@@ -600,6 +600,56 @@ export function calculateLiveHandScore(
     };
   }
 
+  // 14-card Indian Rummy hand evaluation (player has drawn and is preparing to discard/declare):
+  // Check if removing any single card as finish discard leaves a valid winning 13-card declaration
+  if (totalCards === 14) {
+    // 1. Fast check within existing grouped cards
+    for (let g = 0; g < cardGroups.length; g++) {
+      for (let c = 0; c < cardGroups[g].length; c++) {
+        const testGroups = cardGroups
+          .map((grp, idx) => (idx === g ? grp.filter((_, i) => i !== c) : grp))
+          .filter((grp) => grp.length > 0);
+        const testVal = validateDeclaration(testGroups, wildJokerRank);
+        if (testVal.isValid) {
+          const setsCount = testGroups.filter((grp) => isValidSet(grp, wildJokerRank)).length;
+          return {
+            score: 0,
+            pureSequenceCount: testVal.pureSequenceCount,
+            totalSequenceCount: testVal.totalSequenceCount,
+            validSetsCount: setsCount,
+            totalMeldPoints: (testVal.totalSequenceCount + setsCount) * 20,
+            hasPureSeq: true,
+            hasTwoSeq: true,
+            isWinningHand: true,
+            unmatchedCardCount: 0,
+          };
+        }
+      }
+    }
+
+    // 2. Comprehensive check: test all 14 cards against best meld finder
+    const allCards14 = cardGroups.flat();
+    for (let i = allCards14.length - 1; i >= 0; i--) {
+      const remaining13 = allCards14.filter((_, idx) => idx !== i);
+      const testMelds = findBestMelds(remaining13, wildJokerRank);
+      const testVal = validateDeclaration(testMelds, wildJokerRank);
+      if (testVal.isValid) {
+        const setsCount = testMelds.filter((grp) => isValidSet(grp, wildJokerRank)).length;
+        return {
+          score: 0,
+          pureSequenceCount: testVal.pureSequenceCount,
+          totalSequenceCount: testVal.totalSequenceCount,
+          validSetsCount: setsCount,
+          totalMeldPoints: (testVal.totalSequenceCount + setsCount) * 20,
+          hasPureSeq: true,
+          hasTwoSeq: true,
+          isWinningHand: true,
+          unmatchedCardCount: 0,
+        };
+      }
+    }
+  }
+
   let penalty = 0;
   let unmatchedCardCount = 0;
 
