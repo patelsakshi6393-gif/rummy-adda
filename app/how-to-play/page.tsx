@@ -398,7 +398,7 @@ export default function HowToPlayPage() {
           </div>
 
           <Link
-            href="/"
+            href="/lobby"
             className="px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-black font-black text-sm shadow-xl shadow-amber-500/30 transition-transform hover:scale-105 flex items-center gap-2"
           >
             <Play className="w-4 h-4 fill-current" />

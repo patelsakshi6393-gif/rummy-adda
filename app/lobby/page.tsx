@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
@@ -13,15 +13,18 @@ import {
   Coins,
   Sparkles,
   Users,
+  BookOpen,
 } from 'lucide-react';
 import { GameMode, GameState } from '@/lib/types';
 import { clearActiveGameSession } from '@/lib/game-service';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { HowToPlayModal } from '@/components/HowToPlayModal';
 
 export default function LobbyPage() {
   const router = useRouter();
   const { user, profile, wallet } = useAuth();
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
 
   const depositBal = wallet?.depositBalance || 0;
   const winBal = wallet?.winBalance || 0;
@@ -64,12 +67,28 @@ export default function LobbyPage() {
       <div className="min-h-screen flex flex-col bg-[#07070a] text-slate-100">
         <Navbar />
 
+        {/* Interactive How to Play Guide Modal */}
+        <HowToPlayModal
+          isOpen={showHowToPlay}
+          onClose={() => setShowHowToPlay(false)}
+        />
+
         <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 sm:py-12 flex flex-col justify-center space-y-8">
           {/* Header Title for Screen 1 */}
           <div className="text-center space-y-3">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-amber-500/10 to-yellow-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-wider shadow">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <span>100% Real Players • Zero Bots Guaranteed</span>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-amber-500/10 to-yellow-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-wider shadow">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>100% Real Players • Zero Bots Guaranteed</span>
+              </div>
+
+              <button
+                onClick={() => setShowHowToPlay(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                <span>Rules & How to Play</span>
+              </button>
             </div>
 
             <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white">

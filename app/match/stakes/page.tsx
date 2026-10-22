@@ -69,7 +69,7 @@ function StakeSelectionContent() {
         {/* Back navigation to Screen 1 */}
         <div className="flex items-center justify-between">
           <Link
-            href="/"
+            href="/lobby"
             className="inline-flex items-center gap-2 text-xs font-bold text-amber-400 hover:text-amber-300 transition-colors bg-white/5 py-2 px-3.5 rounded-xl border border-white/10"
           >
             <ArrowLeft className="w-4 h-4" />

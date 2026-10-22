@@ -31,7 +31,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (user && !authLoading) {
-      router.push('/');
+      router.push('/lobby');
     }
   }, [user, authLoading, router]);
 
@@ -80,7 +80,7 @@ export default function LoginPage() {
     try {
       // First attempt standard sign in
       await signInWithPhone(cleanPhone, password);
-      router.push('/');
+      router.push('/lobby');
     } catch (err: unknown) {
       const errStr = err instanceof Error ? err.message : String(err);
 

@@ -41,7 +41,7 @@ function SignupForm() {
 
   useEffect(() => {
     if (user && !authLoading) {
-      router.push('/');
+      router.push('/lobby');
     }
   }, [user, authLoading, router]);
 
@@ -113,7 +113,7 @@ function SignupForm() {
       await signUpWithPhone(cleanPhone, password, cleanRef);
       setSuccessMsg('🎉 Registration Successful! ₹20 Welcome Bonus Credited. Entering Game...');
       setTimeout(() => {
-        router.push('/');
+        router.push('/lobby');
       }, 900);
     } catch (err: unknown) {
       const errStr = err instanceof Error ? err.message : String(err);

@@ -1451,6 +1451,9 @@ export async function autoMatchWithBots(gameId: string, currentUserUid: string):
   const gameRef = doc(db, 'games', gameId);
   const playersRef = collection(db, 'games', gameId, 'players');
 
+  const pSnap = await getDocs(playersRef);
+  const existingPlayers = pSnap.docs.map((d) => d.data() as GamePlayerState);
+
   await runTransaction(db, async (tx) => {
     const gameSnap = await tx.get(gameRef);
     if (!gameSnap.exists()) return;
@@ -1458,9 +1461,6 @@ export async function autoMatchWithBots(gameId: string, currentUserUid: string):
 
     // Only auto-match if table is still in WAITING phase
     if (gData.status !== 'WAITING') return;
-
-    const pSnap = await tx.get(playersRef);
-    const existingPlayers = pSnap.docs.map((d) => d.data() as GamePlayerState);
 
     // If already has 2 or more players, transition straight to COUNTDOWN
     if (existingPlayers.length >= 2) {
