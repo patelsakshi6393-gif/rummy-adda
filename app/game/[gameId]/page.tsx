@@ -29,6 +29,7 @@ import {
   playBotTurn,
   calculateDropPenalty,
   autoMatchWithBots,
+  canInjectBotIntoGame,
 } from '@/lib/game-service';
 import {
   isPureSequence,
@@ -330,13 +331,18 @@ export default function GameRoomPage() {
       const remaining = calculateWaitDiff();
       setWaitingTimeLeft(remaining);
 
-      if (remaining <= 0 && !autoMatchCalledRef.current) {
-        autoMatchCalledRef.current = true;
+      if (remaining <= 0) {
         clearInterval(interval);
-        try {
-          await autoMatchWithBots(game.gameId, user.uid);
-        } catch (err) {
-          console.error('Auto match error:', err);
+        if (!autoMatchCalledRef.current) {
+          autoMatchCalledRef.current = true;
+          // Zero-Bot Policy: Strict check ensuring bots are ONLY used for zero-fee practice tables
+          if (canInjectBotIntoGame(game)) {
+            try {
+              await autoMatchWithBots(game.gameId, user.uid);
+            } catch (err) {
+              console.error('Auto match error:', err);
+            }
+          }
         }
       }
     }, 1000);
@@ -1401,36 +1407,55 @@ export default function GameRoomPage() {
               <div className="flex-1 flex items-center justify-center gap-4 sm:gap-8 md:gap-12 relative z-20 my-auto py-1">
                 {/* WAITING ROOM (when waiting for players) */}
                 {game?.status === 'WAITING' && (
-                  <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl text-center space-y-2 shadow-2xl max-w-xs sm:max-w-sm w-full animate-in fade-in zoom-in-95 duration-200">
+                  <div className="bg-black/90 backdrop-blur-md border border-amber-500/40 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl text-center space-y-2.5 shadow-2xl max-w-xs sm:max-w-sm w-full animate-in fade-in zoom-in-95 duration-200">
                     <div className="flex items-center justify-center gap-2 text-amber-400">
                       <Users className="w-4 h-4 animate-pulse" />
                       <span className="font-extrabold text-xs uppercase tracking-wider">
-                        Matchmaking ({players.length}/6 Players)
+                        Matchmaking ({players.length}/{game?.maxPlayers || 2} Players)
                       </span>
                     </div>
 
                     {/* Circular Countdown Timer */}
                     <div className="py-1 flex flex-col items-center justify-center gap-1">
-                      <div className="w-12 h-12 rounded-full border-3 border-amber-400 border-t-transparent flex items-center justify-center animate-spin relative">
-                        <span className="font-mono font-black text-xl text-amber-300">
-                          {waitingTimeLeft}
+                      <div className="w-12 h-12 flex items-center justify-center relative">
+                        <div className="absolute inset-0 rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin" />
+                        <span className="font-mono font-black text-lg text-amber-300 relative z-10">
+                          {waitingTimeLeft > 0 ? waitingTimeLeft : '...'}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-200 font-semibold mt-1">
-                        Searching for online players...
+                        {waitingTimeLeft > 0 ? 'Searching for online players...' : 'Waiting for real players to join...'}
                       </p>
-                      <p className="text-[9px] text-amber-300/80 font-mono">
-                        Auto-matching starts in {waitingTimeLeft}s
+                      <p className="text-[10px] text-emerald-400 font-medium">
+                        100% Real Players Online • Zero Bots
                       </p>
                     </div>
+
+                    {/* Optional Practice Table Bot Match Button (STRICTLY restricted to practice tables, NEVER rendered on cash tables) */}
+                    {canInjectBotIntoGame(game) && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!user || !game) return;
+                          try {
+                            await autoMatchWithBots(game.gameId, user.uid);
+                          } catch (err) {
+                            console.error('Bot match error:', err);
+                          }
+                        }}
+                        className="w-full py-1.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <span>🤖 Add AI Opponent (Practice Mode)</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
                       onClick={handleLeaveQueue}
                       disabled={leavingQueue}
-                      className="w-full py-1.5 px-3 rounded-lg bg-white/10 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 font-bold text-[10px] border border-white/10 transition-colors cursor-pointer"
+                      className="w-full py-2 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs border border-rose-500/30 transition-colors cursor-pointer shadow-md"
                     >
-                      {leavingQueue ? 'Refunding...' : 'Cancel (Refund)'}
+                      {leavingQueue ? 'Refunding...' : 'Cancel Table (Full Refund)'}
                     </button>
                   </div>
                 )}
@@ -1439,7 +1464,7 @@ export default function GameRoomPage() {
                 {game?.status === 'COUNTDOWN' && (
                   <div className="bg-black/85 backdrop-blur-md border border-amber-400 px-6 sm:px-8 py-3 rounded-2xl text-center space-y-1 shadow-2xl animate-pulse">
                     <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
-                      Match Starting ({players.length}/6 Players)
+                      Match Starting ({players.length}/{game?.maxPlayers || 2} Players)
                     </span>
                     <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono">
                       {countdownLeft}s

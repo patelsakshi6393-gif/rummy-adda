@@ -55,7 +55,7 @@ describe('Turn Timer & Matchmaking Verification Suite', () => {
     ]);
   });
 
-  it('Waiting timer auto-matches table with bot if no human players join in time', () => {
+  it('Practice mode waiting timer auto-matches table with bot if no human players join in time', () => {
     const game: Partial<GameState> = {
       status: 'WAITING',
       waitingEndsAt: new Date(Date.now() - 1000).toISOString(), // Expired

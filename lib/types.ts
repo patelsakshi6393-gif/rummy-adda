@@ -177,6 +177,7 @@ export interface GameState {
   pointValue: number;
   entryFee: number;
   playerCount: number;
+  maxPlayers?: number;
   playerUids?: string[];
   droppedUids?: string[];
   status: GameStatus;

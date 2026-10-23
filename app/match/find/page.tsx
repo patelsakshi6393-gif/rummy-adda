@@ -34,6 +34,7 @@ function FindMatchContent() {
 
   const entryFee = parseInt(searchParams.get('entryFee') || '20', 10);
   const pointValue = parseFloat(searchParams.get('pointValue') || '0.25');
+  const maxPlayers = parseInt(searchParams.get('players') || '2', 10) === 6 ? 6 : 2;
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -65,7 +66,7 @@ function FindMatchContent() {
 
     setLoading(true);
     try {
-      const gameId = await findMatch(currentFormat, entryFee, pointValue, profile);
+      const gameId = await findMatch(currentFormat, entryFee, pointValue, profile, maxPlayers);
       router.push(`/game/${gameId}`);
     } catch (err: unknown) {
       console.error('Find match error:', err);

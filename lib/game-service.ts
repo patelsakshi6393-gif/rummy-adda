@@ -62,6 +62,8 @@ export interface StakeOption {
 export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
   points: [
     { entryFee: 20, pointValue: 0.25, name: 'Micro Stakes (₹0.25/pt)' },
+    { entryFee: 40, pointValue: 0.5, name: 'Mini Stakes (₹0.50/pt)' },
+    { entryFee: 80, pointValue: 1, name: 'Standard Stakes (₹1/pt)' },
     { entryFee: 160, pointValue: 2, name: 'Bronze Stake (₹2/pt)' },
     { entryFee: 400, pointValue: 5, name: 'Silver Stake (₹5/pt - ₹400)', badge: 'Popular' },
     { entryFee: 800, pointValue: 10, name: 'Silver Stake (₹10/pt)' },
@@ -73,20 +75,26 @@ export const STAKE_OPTIONS: Record<GameMode, StakeOption[]> = {
   ],
   pool101: [
     { entryFee: 20, pointValue: 0.25, name: 'Pool 101 - Micro (₹20)' },
+    { entryFee: 40, pointValue: 0.5, name: 'Pool 101 - Mini (₹40)' },
+    { entryFee: 80, pointValue: 1, name: 'Pool 101 - Standard (₹80)' },
     { entryFee: 160, pointValue: 2, name: 'Pool 101 - Bronze (₹160)' },
-    { entryFee: 800, pointValue: 10, name: 'Pool 101 - Silver (₹800)' },
+    { entryFee: 400, pointValue: 5, name: 'Pool 101 - Silver (₹400)' },
+    { entryFee: 800, pointValue: 10, name: 'Pool 101 - Gold (₹800)' },
     { entryFee: 1600, pointValue: 20, name: 'Pool 101 - Ruby (₹1,600)' },
-    { entryFee: 3200, pointValue: 40, name: 'Pool 101 - Gold (₹3,200)' },
+    { entryFee: 3200, pointValue: 40, name: 'Pool 101 - Masters (₹3,200)' },
     { entryFee: 6000, pointValue: 75, name: 'Pool 101 - Platinum (₹6,000)' },
     { entryFee: 10000, pointValue: 125, name: 'Pool 101 - Diamond (₹10,000)' },
     { entryFee: 16000, pointValue: 200, name: 'Pool 101 - High Roller (₹16,000)' },
   ],
   deals: [
     { entryFee: 20, pointValue: 0.25, name: 'Deals Rummy - Micro (₹20)' },
+    { entryFee: 40, pointValue: 0.5, name: 'Deals Rummy - Mini (₹40)' },
+    { entryFee: 80, pointValue: 1, name: 'Deals Rummy - Standard (₹80)' },
     { entryFee: 160, pointValue: 2, name: 'Deals Rummy - Bronze (₹160)' },
-    { entryFee: 800, pointValue: 10, name: 'Deals Rummy - Silver (₹800)' },
+    { entryFee: 400, pointValue: 5, name: 'Deals Rummy - Silver (₹400)' },
+    { entryFee: 800, pointValue: 10, name: 'Deals Rummy - Gold (₹800)' },
     { entryFee: 1600, pointValue: 20, name: 'Deals Rummy - Ruby (₹1,600)' },
-    { entryFee: 3200, pointValue: 40, name: 'Deals Rummy - Gold (₹3,200)' },
+    { entryFee: 3200, pointValue: 40, name: 'Deals Rummy - Masters (₹3,200)' },
     { entryFee: 6000, pointValue: 75, name: 'Deals Rummy - Platinum (₹6,000)' },
     { entryFee: 10000, pointValue: 125, name: 'Deals Rummy - Diamond (₹10,000)' },
     { entryFee: 16000, pointValue: 200, name: 'Deals Rummy - High Roller (₹16,000)' },
@@ -185,7 +193,8 @@ export async function findMatch(
   mode: GameMode,
   entryFee: number,
   pointValue: number,
-  profile: UserProfile
+  profile: UserProfile,
+  maxPlayers: number = 2
 ): Promise<string> {
   const currentUid = auth.currentUser?.uid || profile.uid;
   const walletRef = doc(db, 'wallets', currentUid);
@@ -280,6 +289,12 @@ export async function findMatch(
       ? gData.playerUids.includes(currentUid)
       : false;
 
+    // Filter by table capacity (2-player vs 6-player)
+    const tableCapacity = gData.maxPlayers || 2;
+    if (tableCapacity !== maxPlayers) {
+      continue;
+    }
+
     // Check freshness: table must have activity within last 90 seconds
     const lastActiveTime = new Date(gData.updatedAt || gData.createdAt || 0).getTime();
     const isFresh = now - lastActiveTime < 90000;
@@ -305,7 +320,7 @@ export async function findMatch(
       } catch {
         // Skip unverified
       }
-    } else if ((gData.playerCount || 0) < 6) {
+    } else if ((gData.playerCount || 0) < maxPlayers) {
       targetGameId = gDoc.id;
       break;
     }
@@ -335,7 +350,8 @@ export async function findMatch(
         }
       }
 
-      if ((gData.playerCount || 0) >= 6 || (gData.status !== 'WAITING' && gData.status !== 'COUNTDOWN')) {
+      const tableCap = gData.maxPlayers || maxPlayers;
+      if ((gData.playerCount || 0) >= tableCap || (gData.status !== 'WAITING' && gData.status !== 'COUNTDOWN')) {
         throw new Error('Table was just filled. Please try matching again.');
       }
 
@@ -372,9 +388,9 @@ export async function findMatch(
         updatedAt: new Date().toISOString(),
       };
 
-      // 15-second countdown starts once at least 2 real players are seated
+      // Synchronized countdown starts once at least 2 real players are seated
       if (newCount >= 2) {
-        const countdownEndsAt = new Date(Date.now() + 15000).toISOString();
+        const countdownEndsAt = new Date(Date.now() + 10000).toISOString();
         updates.status = 'COUNTDOWN';
         updates.phase = 'COUNTDOWN';
         updates.countdownEndsAt = countdownEndsAt;
@@ -408,19 +424,20 @@ export async function findMatch(
     return gameId;
   } else {
     // Create new match session with honest waiting state
-    const gameId = `match_${mode}_${entryFee}_${Date.now()}`;
+    const gameId = `match_${mode}_${entryFee}_${maxPlayers}p_${Date.now()}`;
     const gameRef = doc(db, 'games', gameId);
     const newGame: GameState = {
       gameId,
-      tableId: `table_${mode}_${entryFee}`,
+      tableId: `table_${mode}_${entryFee}_${maxPlayers}p`,
       mode,
       pointValue,
       entryFee,
+      maxPlayers,
       playerCount: 1,
       playerUids: [currentUid],
       status: 'WAITING',
       phase: 'WAITING',
-      waitingEndsAt: new Date(Date.now() + 10000).toISOString(),
+      waitingEndsAt: new Date(Date.now() + 60000).toISOString(),
       openDeck: [],
       closedDeckCount: 108,
       createdAt: new Date().toISOString(),
@@ -568,6 +585,74 @@ export async function leaveMatchQueue(
 
   await clearActiveGameSession(playerUid, gameId);
   return { refunded: refundAmount > 0, refundAmount };
+}
+
+/**
+ * Fetch real-time active players count for a specific game format, stake & table capacity
+ */
+export async function getLivePlayerCount(
+  mode: GameMode,
+  entryFee: number,
+  maxPlayers: number = 2
+): Promise<number> {
+  try {
+    const q = query(
+      collection(db, 'games'),
+      where('status', 'in', ['WAITING', 'COUNTDOWN', 'PLAYING'])
+    );
+    const snap = await getDocs(q);
+    const now = Date.now();
+    let count = 0;
+    for (const d of snap.docs) {
+      const data = d.data() as GameState;
+      if (data.mode !== mode || data.entryFee !== entryFee) continue;
+      const lastActive = new Date(data.updatedAt || data.createdAt || 0).getTime();
+      if (now - lastActive < 120000) {
+        const tableMax = data.maxPlayers || 2;
+        if (tableMax === maxPlayers) {
+          count += data.playerCount || (data.playerUids ? data.playerUids.length : 1);
+        }
+      }
+    }
+    return count;
+  } catch (err) {
+    console.warn('Error fetching live player count:', err);
+    return 0;
+  }
+}
+
+/**
+ * Fetch live active player counts across all stakes for a format and player capacity
+ */
+export async function getAllStakesPlayerCounts(
+  mode: GameMode,
+  maxPlayers: number = 2
+): Promise<Record<number, number>> {
+  try {
+    const q = query(
+      collection(db, 'games'),
+      where('status', 'in', ['WAITING', 'COUNTDOWN', 'PLAYING'])
+    );
+    const snap = await getDocs(q);
+    const now = Date.now();
+    const counts: Record<number, number> = {};
+    for (const d of snap.docs) {
+      const data = d.data() as GameState;
+      if (data.mode !== mode) continue;
+      const lastActive = new Date(data.updatedAt || data.createdAt || 0).getTime();
+      if (now - lastActive < 120000) {
+        const tableMax = data.maxPlayers || 2;
+        if (tableMax === maxPlayers && data.entryFee) {
+          const pCount = data.playerCount || (data.playerUids ? data.playerUids.length : 1);
+          counts[data.entryFee] = (counts[data.entryFee] || 0) + pCount;
+        }
+      }
+    }
+    return counts;
+  } catch (err) {
+    console.warn('Error fetching all stakes player counts:', err);
+    return {};
+  }
 }
 
 /**
@@ -1373,14 +1458,84 @@ export async function discardCard(gameId: string, playerUid: string, cardToDisca
 }
 
 /**
+ * Create and start an instant practice match against a bot AI opponent
+ */
+export async function createPracticeMatch(
+  profile: UserProfile,
+  mode: GameMode = 'points',
+  maxPlayers: number = 2
+): Promise<string> {
+  const userUid = auth.currentUser?.uid || profile.uid;
+  const gameId = `practice_${mode}_${maxPlayers}p_${Date.now()}`;
+  const gameRef = doc(db, 'games', gameId);
+
+  const newGame: GameState = {
+    gameId,
+    tableId: `table_practice_${mode}_${maxPlayers}p_${Date.now()}`,
+    mode,
+    pointValue: 1,
+    entryFee: 0,
+    maxPlayers,
+    playerCount: 1,
+    playerUids: [userUid],
+    status: 'WAITING',
+    phase: 'WAITING',
+    waitingEndsAt: new Date(Date.now() + 5000).toISOString(),
+    openDeck: [],
+    closedDeckCount: 108,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  (newGame as any).isPractice = true;
+  await setDoc(gameRef, newGame);
+
+  await startPracticeBotMatch(gameId, userUid, profile);
+  return gameId;
+}
+
+/**
+ * Strict Zero-Bot Cash Policy Validator:
+ * Real cash games MUST be 100% human players with ZERO bots.
+ * AI bot opponents and automatic bot matchmaking are strictly restricted
+ * to zero-fee practice tables (isPractice === true or mode === 'practice', entryFee === 0).
+ */
+export function canInjectBotIntoGame(
+  game: Partial<GameState> | null | undefined
+): boolean {
+  if (!game) return false;
+  const isPractice = Boolean(
+    (game as any).isPractice === true || game.mode === ('practice' as any)
+  );
+  const entryFee = Number(game.entryFee ?? 0);
+  const hasEntryFee = !isNaN(entryFee) && entryFee > 0;
+  return isPractice && !hasEntryFee;
+}
+
+/**
  * Start instant practice match against a bot AI opponent
  */
 export async function startPracticeBotMatch(
-  gameId: string,
-  userUid: string,
+  gameIdOrProfile: string | UserProfile,
+  userUid?: string,
   profile?: UserProfile | null
-): Promise<void> {
+): Promise<string | void> {
+  if (typeof gameIdOrProfile === 'object' && gameIdOrProfile !== null) {
+    return await createPracticeMatch(gameIdOrProfile);
+  }
+  const gameId = gameIdOrProfile;
+  if (!userUid) return;
+
   const gameRef = doc(db, 'games', gameId);
+  const gameSnap = await getDoc(gameRef);
+  if (gameSnap.exists()) {
+    const gData = gameSnap.data() as GameState;
+    // Strict zero-bot cash policy
+    if (!canInjectBotIntoGame(gData)) {
+      console.warn(`[Zero-Bot Cash Policy] Blocked startPracticeBotMatch on cash table ${gameId}`);
+      return;
+    }
+  }
+
   const botUid = `bot_${Date.now()}`;
   const botPlayerRef = doc(db, 'games', gameId, 'players', botUid);
   const userPlayerRef = doc(db, 'games', gameId, 'players', userUid);
@@ -1461,6 +1616,12 @@ export async function autoMatchWithBots(gameId: string, currentUserUid: string):
 
     // Only auto-match if table is still in WAITING phase
     if (gData.status !== 'WAITING') return;
+
+    // CRITICAL: Cash games must NEVER have bots injected! Strict zero-fake-player policy.
+    if (!canInjectBotIntoGame(gData)) {
+      console.warn(`[Zero-Bot Cash Policy] Blocked autoMatchWithBots on cash table ${gameId} (entryFee: ₹${gData.entryFee})`);
+      return;
+    }
 
     // If already has 2 or more players, transition straight to COUNTDOWN
     if (existingPlayers.length >= 2) {
