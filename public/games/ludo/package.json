@@ -1,0 +1,12 @@
+{
+  "name": "rummyludo",
+  "version": "1.0.0",
+  "description": "Indian Real Cash Ludo Game with starting stake from ₹1, 2P & 4P modes, shared with RummyAdda Firebase backend",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["ludo", "real-cash-ludo", "rummyadda"],
+  "author": "RummyAdda",
+  "license": "ISC"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "rummyaviator",
+  "version": "1.0.0",
+  "description": "Aviator Crash Game with Demo (guaranteed win) and Real Cash mode, shared with RummyAdda Firebase backend",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["aviator", "crash-game", "rummyadda"],
+  "author": "RummyAdda",
+  "license": "ISC"
+}

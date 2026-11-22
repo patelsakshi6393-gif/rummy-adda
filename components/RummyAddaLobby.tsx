@@ -35,6 +35,10 @@ import {
   ExternalLink,
   ChevronRight,
   TrendingUp,
+  Plane,
+  Dices,
+  Flame,
+  Zap,
 } from 'lucide-react';
 import { GameMode, getPlayableBalance, getWithdrawableBalance } from '@/lib/types';
 import {
@@ -49,6 +53,12 @@ import { HowToPlayModal } from '@/components/HowToPlayModal';
 export function RummyAddaLobby() {
   const router = useRouter();
   const { user, profile, wallet, logout } = useAuth();
+
+  // Selected Game: RUMMY, AVIATOR, LUDO
+  const [selectedGame, setSelectedGame] = useState<'rummy' | 'aviator' | 'ludo'>('rummy');
+  const [aviatorStake, setAviatorStake] = useState<number>(10);
+  const [ludoStake, setLudoStake] = useState<number>(1);
+  const [ludoPlayers, setLudoPlayers] = useState<2 | 4>(2);
 
   // Mode Selection: CASH, TOURNAMENTS, PRACTICE
   const [modeTab, setModeTab] = useState<'CASH' | 'TOURNAMENTS' | 'PRACTICE'>('CASH');
@@ -356,6 +366,73 @@ export function RummyAddaLobby() {
         </div>
 
         {/* =======================================================================
+            GAME SELECTION TABS: RUMMY (Min ₹20) | AVIATOR (Min ₹10) | LUDO (Min ₹1)
+            ======================================================================= */}
+        <div className="bg-[#240307] p-1.5 rounded-2xl border border-amber-500/40 shadow-xl grid grid-cols-3 gap-1.5">
+          {/* RUMMY */}
+          <button
+            type="button"
+            onClick={() => setSelectedGame('rummy')}
+            className={`py-2 px-1 rounded-xl text-xs font-black uppercase tracking-wider flex flex-col items-center justify-center transition-all cursor-pointer ${
+              selectedGame === 'rummy'
+                ? 'bg-gradient-to-r from-[#ffe49e] via-[#f5ad18] to-[#e69806] text-slate-950 shadow-md ring-2 ring-amber-400/80 scale-[1.02]'
+                : 'text-slate-300 hover:text-white bg-black/20'
+            }`}
+          >
+            <div className="flex items-center gap-1 font-black">
+              <Layers className="w-3.5 h-3.5" />
+              <span>RUMMY</span>
+            </div>
+            <span className="text-[9px] font-bold opacity-80 mt-0.5">Min ₹20</span>
+          </button>
+
+          {/* AVIATOR */}
+          <button
+            type="button"
+            onClick={() => setSelectedGame('aviator')}
+            className={`py-2 px-1 rounded-xl text-xs font-black uppercase tracking-wider flex flex-col items-center justify-center transition-all cursor-pointer relative ${
+              selectedGame === 'aviator'
+                ? 'bg-gradient-to-r from-[#e11d48] to-[#be123c] text-white shadow-md ring-2 ring-rose-400/80 scale-[1.02]'
+                : 'text-slate-300 hover:text-white bg-black/20'
+            }`}
+          >
+            <span className="absolute -top-1.5 -right-1 px-1.5 py-0.2 bg-rose-600 text-white text-[8px] font-black rounded-full uppercase shadow animate-pulse">
+              HOT
+            </span>
+            <div className="flex items-center gap-1 font-black">
+              <Plane className="w-3.5 h-3.5" />
+              <span>AVIATOR</span>
+            </div>
+            <span className="text-[9px] font-bold opacity-80 mt-0.5">Min ₹10</span>
+          </button>
+
+          {/* LUDO */}
+          <button
+            type="button"
+            onClick={() => setSelectedGame('ludo')}
+            className={`py-2 px-1 rounded-xl text-xs font-black uppercase tracking-wider flex flex-col items-center justify-center transition-all cursor-pointer relative ${
+              selectedGame === 'ludo'
+                ? 'bg-gradient-to-r from-[#16a34a] to-[#15803d] text-white shadow-md ring-2 ring-emerald-400/80 scale-[1.02]'
+                : 'text-slate-300 hover:text-white bg-black/20'
+            }`}
+          >
+            <span className="absolute -top-1.5 -right-1 px-1.5 py-0.2 bg-emerald-600 text-white text-[8px] font-black rounded-full uppercase shadow">
+              ₹1
+            </span>
+            <div className="flex items-center gap-1 font-black">
+              <Dices className="w-3.5 h-3.5" />
+              <span>LUDO</span>
+            </div>
+            <span className="text-[9px] font-bold opacity-80 mt-0.5">Start ₹1</span>
+          </button>
+        </div>
+
+        {/* =======================================================================
+            GAME SPECIFIC SELECTION AND ENTRY FEE
+            ======================================================================= */}
+        {selectedGame === 'rummy' && (
+          <div className="space-y-3.5">
+            {/* =======================================================================
             3. MODE SELECTION TABS: CASH, TOURNAMENTS, PRACTICE
             ======================================================================= */}
         <div className="grid grid-cols-3 gap-2">
@@ -583,7 +660,7 @@ export function RummyAddaLobby() {
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-xs font-black shadow-sm animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
                   <span>
-                    🟢 {activeWaitingCount} {activeWaitingCount === 1 ? 'player is active' : 'players are active'} / Boost
+                    {activeWaitingCount} {activeWaitingCount === 1 ? 'player is active' : 'players are active'} / Boost
                   </span>
                 </div>
               ) : (
@@ -599,7 +676,7 @@ export function RummyAddaLobby() {
                   onClick={() => setShowAllStakesModal(true)}
                   className="text-[11px] text-amber-400 hover:text-amber-300 underline font-semibold transition-colors mt-0.5"
                 >
-                  📊 View All Stakes
+                  View All Stakes
                 </button>
               </div>
             </div>
@@ -616,7 +693,7 @@ export function RummyAddaLobby() {
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>
-                  🟢 {activeWaitingCount} {activeWaitingCount === 1 ? 'player is active' : 'players are active'} / Boost
+                  {activeWaitingCount} {activeWaitingCount === 1 ? 'player is active' : 'players are active'} / Boost
                 </span>
               </div>
             ) : null}
@@ -637,7 +714,254 @@ export function RummyAddaLobby() {
             </button>
           </div>
         </div>
+          </div>
+        )}
 
+        {/* =======================================================================
+            AVIATOR CRASH GAME SELECTION CARD (MIN ₹10)
+            ======================================================================= */}
+        {selectedGame === 'aviator' && (
+          <div className="relative rounded-3xl bg-gradient-to-b from-[#38040d] via-[#240207] to-[#120104] border border-rose-500/60 shadow-[0_12px_40px_rgba(0,0,0,0.8)] p-6 sm:p-7 space-y-5 overflow-hidden">
+            <div className="text-center space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-black uppercase tracking-wider">
+                <Plane className="w-3.5 h-3.5" />
+                <span>Spribe Aviator Crash Game</span>
+              </div>
+              <h3 className="text-white text-xl sm:text-2xl font-black tracking-wide">
+                AVIATOR CRASH
+              </h3>
+              <p className="text-xs text-rose-300 font-semibold">
+                Cash Out Up To 100x • Demo &amp; Real Cash Modes
+              </p>
+            </div>
+
+            {/* Entry Fee / Bet Selector */}
+            <div className="text-center space-y-3">
+              <span className="text-xs font-black text-amber-400 uppercase tracking-wider block">
+                Select Bet Amount (Min ₹10)
+              </span>
+
+              {/* Control Row: Min, [-], Amount, [+], Max */}
+              <div className="flex items-center justify-between gap-2 max-w-xs mx-auto">
+                <button
+                  type="button"
+                  onClick={() => setAviatorStake(10)}
+                  className="text-white/80 hover:text-white active:scale-95 text-xs sm:text-sm font-black uppercase cursor-pointer select-none"
+                >
+                  Min
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAviatorStake((prev) => Math.max(10, prev - 10))}
+                  disabled={aviatorStake <= 10}
+                  className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#f3f4f6] to-[#9ca3af] hover:from-white hover:to-slate-300 disabled:opacity-40 text-slate-950 font-black text-2xl flex items-center justify-center shadow-md active:scale-90 transition-transform cursor-pointer"
+                >
+                  <Minus className="w-5 h-5 stroke-[3]" />
+                </button>
+
+                <div className="flex-1 py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-center shadow-inner">
+                  <span className="text-xl sm:text-2xl font-black text-white tracking-wide">
+                    ₹ {aviatorStake}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setAviatorStake((prev) => prev + 10)}
+                  className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#ffe58f] via-[#f5ad18] to-[#d48806] hover:from-[#fff0ad] hover:to-[#e09205] text-slate-950 font-black text-2xl flex items-center justify-center shadow-md shadow-amber-500/20 active:scale-90 transition-transform cursor-pointer"
+                >
+                  <Plus className="w-5 h-5 stroke-[3]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAviatorStake(1000)}
+                  className="text-white/80 hover:text-white active:scale-95 text-xs sm:text-sm font-black uppercase cursor-pointer select-none"
+                >
+                  Max
+                </button>
+              </div>
+
+              {/* Quick Chips */}
+              <div className="grid grid-cols-4 gap-1.5 max-w-xs mx-auto pt-1 font-mono-num font-bold text-xs">
+                {[10, 20, 50, 100].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setAviatorStake(amt)}
+                    className={`py-1.5 rounded-lg border text-center transition-all ${
+                      aviatorStake === amt
+                        ? 'bg-rose-600 text-white border-rose-400 shadow-md scale-105'
+                        : 'bg-white/5 hover:bg-white/15 text-slate-200 border-white/10'
+                    }`}
+                  >
+                    ₹{amt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Highlights Box */}
+            <div className="p-3 bg-black/40 rounded-2xl border border-white/10 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Playable Wallet:</span>
+                <span className="font-bold text-emerald-400">₹ {playableBalance.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400">Demo Practice Mode:</span>
+                <span className="font-bold text-amber-400">Guaranteed Win Available</span>
+              </div>
+            </div>
+
+            {/* LAUNCH BUTTON */}
+            <div className="pt-2 flex flex-col items-center">
+              <Link
+                href="/aviator"
+                className="w-full max-w-xs py-3.5 px-8 rounded-full bg-gradient-to-r from-rose-600 via-red-500 to-rose-600 hover:brightness-110 active:scale-95 text-white font-black text-base sm:text-lg tracking-wider uppercase shadow-xl shadow-rose-600/30 transition-all flex items-center justify-center gap-2"
+              >
+                <Plane className="w-5 h-5" />
+                <span>PLAY AVIATOR NOW</span>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* =======================================================================
+            LUDO GAME SELECTION CARD (STARTING ₹1)
+            ======================================================================= */}
+        {selectedGame === 'ludo' && (
+          <div className="relative rounded-3xl bg-gradient-to-b from-[#0e2a14] via-[#081b0c] to-[#040e06] border border-emerald-500/60 shadow-[0_12px_40px_rgba(0,0,0,0.8)] p-6 sm:p-7 space-y-5 overflow-hidden">
+            <div className="text-center space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase tracking-wider">
+                <Dices className="w-3.5 h-3.5" />
+                <span>Real Cash Ludo (Start from ₹1)</span>
+              </div>
+              <h3 className="text-white text-xl sm:text-2xl font-black tracking-wide">
+                LUDO ADDA
+              </h3>
+              <p className="text-xs text-emerald-300 font-semibold">
+                Fast 1v1 &amp; 4P Real Cash Dice Matches
+              </p>
+            </div>
+
+            {/* Player Selector [ 2 Players | 4 Players ] */}
+            <div className="text-center space-y-2">
+              <h4 className="text-white text-sm font-bold tracking-wide">Player Mode</h4>
+              <div className="inline-flex items-center bg-black/40 border border-emerald-500/30 rounded-full p-1 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setLudoPlayers(2)}
+                  className={`py-1.5 px-6 rounded-full text-xs font-black transition-all cursor-pointer ${
+                    ludoPlayers === 2
+                      ? 'bg-gradient-to-b from-[#22c55e] to-[#15803d] text-white shadow-md scale-105'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  2 Players (1v1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLudoPlayers(4)}
+                  className={`py-1.5 px-6 rounded-full text-xs font-black transition-all cursor-pointer ${
+                    ludoPlayers === 4
+                      ? 'bg-gradient-to-b from-[#22c55e] to-[#15803d] text-white shadow-md scale-105'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  4 Players
+                </button>
+              </div>
+            </div>
+
+            {/* Entry Fee Selector */}
+            <div className="text-center space-y-3">
+              <span className="text-xs font-black text-amber-400 uppercase tracking-wider block">
+                Select Entry Fee (Starts at ₹1)
+              </span>
+
+              {/* Control Row: Min, [-], Amount, [+], Max */}
+              <div className="flex items-center justify-between gap-2 max-w-xs mx-auto">
+                <button
+                  type="button"
+                  onClick={() => setLudoStake(1)}
+                  className="text-white/80 hover:text-white active:scale-95 text-xs sm:text-sm font-black uppercase cursor-pointer select-none"
+                >
+                  Min
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLudoStake((prev) => Math.max(1, prev - 1))}
+                  disabled={ludoStake <= 1}
+                  className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#f3f4f6] to-[#9ca3af] hover:from-white hover:to-slate-300 disabled:opacity-40 text-slate-950 font-black text-2xl flex items-center justify-center shadow-md active:scale-90 transition-transform cursor-pointer"
+                >
+                  <Minus className="w-5 h-5 stroke-[3]" />
+                </button>
+
+                <div className="flex-1 py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-center shadow-inner">
+                  <span className="text-xl sm:text-2xl font-black text-white tracking-wide">
+                    ₹ {ludoStake}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setLudoStake((prev) => prev + (prev === 1 ? 4 : 5))}
+                  className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#ffe58f] via-[#f5ad18] to-[#d48806] hover:from-[#fff0ad] hover:to-[#e09205] text-slate-950 font-black text-2xl flex items-center justify-center shadow-md shadow-amber-500/20 active:scale-90 transition-transform cursor-pointer"
+                >
+                  <Plus className="w-5 h-5 stroke-[3]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLudoStake(500)}
+                  className="text-white/80 hover:text-white active:scale-95 text-xs sm:text-sm font-black uppercase cursor-pointer select-none"
+                >
+                  Max
+                </button>
+              </div>
+
+              {/* Quick Chips */}
+              <div className="grid grid-cols-4 gap-1.5 max-w-xs mx-auto pt-1 font-mono-num font-bold text-xs">
+                {[1, 5, 10, 25].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setLudoStake(amt)}
+                    className={`py-1.5 rounded-lg border text-center transition-all ${
+                      ludoStake === amt
+                        ? 'bg-emerald-600 text-white border-emerald-400 shadow-md scale-105'
+                        : 'bg-white/5 hover:bg-white/15 text-slate-200 border-white/10'
+                    }`}
+                  >
+                    ₹{amt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Prize Pool Info */}
+            <div className="p-3 bg-black/40 rounded-2xl border border-white/10 flex items-center justify-between text-xs">
+              <span className="text-slate-300 font-bold">Winner Prize Pool:</span>
+              <span className="text-base font-black text-emerald-400 font-mono-num">
+                ₹ {(ludoStake * ludoPlayers * 0.9).toFixed(2)}
+              </span>
+            </div>
+
+            {/* LAUNCH BUTTON */}
+            <div className="pt-2 flex flex-col items-center">
+              <Link
+                href="/ludo"
+                className="w-full max-w-xs py-3.5 px-8 rounded-full bg-gradient-to-r from-emerald-500 via-green-500 to-teal-500 hover:brightness-110 active:scale-95 text-slate-950 font-black text-base sm:text-lg tracking-wider uppercase shadow-xl shadow-emerald-500/30 transition-all flex items-center justify-center gap-2"
+              >
+                <Dices className="w-5 h-5" />
+                <span>PLAY LUDO NOW</span>
+              </Link>
+            </div>
+          </div>
+        )}
+        
         {/* 100% Real Players Trust Badge */}
         <div className="text-center py-2 space-y-0.5">
           <p className="text-[11px] text-amber-400/90 font-bold flex items-center justify-center gap-1">
