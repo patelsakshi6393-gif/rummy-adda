@@ -42,11 +42,12 @@ export function getCrashPoint(isDemo = false) {
 
 /**
  * Calculates current multiplier based on elapsed flight time (seconds)
+ * Tuned for standard, fast Spribe Aviator tempo (~4s to reach 2.00x)
  */
 export function getMultiplierForTime(seconds) {
   if (seconds <= 0) return 1.00;
-  // Smooth exponential growth curve: starts gentle, accelerates over time
-  const val = 1.00 + (seconds * 0.07) + Math.pow(seconds * 0.095, 2.15);
+  // Dynamic smooth growth curve
+  const val = 1.00 + (seconds * 0.12) + Math.pow(seconds * 0.145, 2.05);
   return Number(val.toFixed(2));
 }
 

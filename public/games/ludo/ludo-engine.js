@@ -99,12 +99,12 @@ export class LudoGame {
       this.consecutiveSixes = 0;
     }
 
-    // If no moves are possible, pass turn after brief delay
+    // If no moves are possible, pass turn quickly (200ms)
     const valid = this.getValidMoves();
     if (valid.length === 0 && this.diceValue !== 6) {
       setTimeout(() => {
         this.nextTurn();
-      }, 700);
+      }, 200);
     }
 
     return this.diceValue;

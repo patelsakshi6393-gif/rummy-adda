@@ -481,7 +481,7 @@ function startWaitingPeriod() {
   updateBetPanelUI(1);
   updateBetPanelUI(2);
 
-  const duration = 5000;
+  const duration = 2400; // Ultra snappy 2.4s waiting countdown
   const start = performance.now();
 
   function progressLoop(now) {
@@ -570,7 +570,7 @@ function triggerCrash() {
 
   setTimeout(() => {
     startWaitingPeriod();
-  }, 3200);
+  }, 1200);
 }
 
 // ==========================================
@@ -579,34 +579,83 @@ function triggerCrash() {
 async function handlePanelAction(panelNum) {
   const p = panelNum === 1 ? p1 : p2;
 
+  // 1. INSTANT CASHOUT (0ms LATENCY)
   if (currentRoundState === RoundState.FLYING && p.isBetPlaced && !p.isCashedOut) {
     p.isCashedOut = true;
     p.cashoutMultiplier = currentMultiplier;
-    const winAmount = p.stake * p.cashoutMultiplier;
+    const winAmount = Number((p.stake * p.cashoutMultiplier).toFixed(2));
 
     sound.playCashout();
     if (typeof confetti === 'function') {
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.8 } });
     }
 
-    await creditWinnings(winAmount, p.cashoutMultiplier);
+    // Optimistic balance credit
+    if (isDemoMode) {
+      demoBalance += winAmount;
+    } else {
+      realWallet.winBalance = (realWallet.winBalance || 0) + winAmount;
+    }
+    updateBalanceUI();
     updateBetPanelUI(panelNum);
+
+    // Non-blocking background sync
+    if (!isDemoMode && currentUser) {
+      creditWinnings(winAmount, p.cashoutMultiplier).catch(console.warn);
+    }
     return;
   }
 
+  // 2. INSTANT BET / CANCEL (0ms LATENCY)
   if (currentRoundState === RoundState.WAITING) {
     if (p.isBetPlaced) {
+      // Cancel bet instantly
       p.isBetPlaced = false;
       if (isDemoMode) {
         demoBalance += p.stake;
-        updateBalanceUI();
+      } else {
+        realWallet.depositBalance = (realWallet.depositBalance || 0) + p.stake;
       }
+      updateBalanceUI();
       updateBetPanelUI(panelNum);
     } else {
-      const success = await deductBet(p.stake);
-      if (success) {
-        p.isBetPlaced = true;
-        updateBetPanelUI(panelNum);
+      // Validate balance
+      const playable = isDemoMode ? demoBalance : getPlayableBalance();
+      if (!isDemoMode && !currentUser) {
+        openAuthModal('signin');
+        showToast('Please sign in to place real cash bets.', 'info');
+        return;
+      }
+      if (playable < p.stake) {
+        showInsufficientBalanceDialog(p.stake, playable);
+        return;
+      }
+
+      // Optimistic instant bet placement
+      p.isBetPlaced = true;
+      if (isDemoMode) {
+        demoBalance -= p.stake;
+      } else {
+        let rem = p.stake;
+        const depDec = Math.min(realWallet.depositBalance || 0, rem);
+        realWallet.depositBalance = Math.max(0, (realWallet.depositBalance || 0) - depDec);
+        rem -= depDec;
+        const bonDec = Math.min(realWallet.bonusBalance || 0, rem);
+        realWallet.bonusBalance = Math.max(0, (realWallet.bonusBalance || 0) - bonDec);
+        rem -= bonDec;
+        realWallet.winBalance = Math.max(0, (realWallet.winBalance || 0) - rem);
+      }
+      updateBalanceUI();
+      updateBetPanelUI(panelNum);
+
+      // Asynchronous background sync
+      if (!isDemoMode && currentUser) {
+        deductBet(p.stake).catch(err => {
+          console.warn('Bet deduction error:', err);
+          p.isBetPlaced = false;
+          updateBetPanelUI(panelNum);
+          showToast('Failed to sync bet with server.', 'error');
+        });
       }
     }
   }

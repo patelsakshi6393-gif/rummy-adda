@@ -342,8 +342,28 @@ function updatePrizePool() {
 updatePrizePool();
 
 async function startLudoMatch() {
-  const ok = await deductMatchFee(selectedStake);
-  if (!ok) return;
+  if (!currentUser) {
+    openModal(modalAuth);
+    showToast('Please sign in or create an account to play with real cash.', 'info');
+    return;
+  }
+
+  const playable = getPlayableBalance();
+  if (playable < selectedStake) {
+    showInsufficientBalanceDialog(selectedStake, playable);
+    return;
+  }
+
+  // Instant optimistic balance deduction (0ms latency)
+  let rem = selectedStake;
+  const dep = Math.min(userWallet.depositBalance || 0, rem);
+  userWallet.depositBalance = Math.max(0, (userWallet.depositBalance || 0) - dep);
+  rem -= dep;
+  const bon = Math.min(userWallet.bonusBalance || 0, rem);
+  userWallet.bonusBalance = Math.max(0, (userWallet.bonusBalance || 0) - bon);
+  rem -= bon;
+  userWallet.winBalance = Math.max(0, (userWallet.winBalance || 0) - rem);
+  updateWalletUI();
 
   // Initialize Game: Blue ("You") starts first vs Green ("Bot")
   game = new LudoGame(selectedPlayers, selectedStake);
@@ -358,6 +378,9 @@ async function startLudoMatch() {
   renderDiceFace(botDiceSvg, 1);
   renderLudoBoard();
   updateTurnState();
+
+  // Synchronize to Firestore asynchronously in background
+  deductMatchFee(selectedStake).catch(console.warn);
 }
 
 function returnToLobby() {
@@ -735,8 +758,8 @@ function updateTurnState() {
     btnRollDice.disabled = true;
     btnRollDice.classList.add('opacity-60', 'pointer-events-none');
 
-    // Bot auto-play delay
-    botTimer = setTimeout(playBotTurn, 800);
+    // Bot auto-play delay - Fast 220ms
+    botTimer = setTimeout(playBotTurn, 220);
   }
 }
 
@@ -758,19 +781,19 @@ btnRollDice.onclick = () => {
       setTimeout(() => {
         renderLudoBoard();
         updateTurnState();
-      }, 700);
+      }, 250);
     } else if (validMoves.length === 1) {
-      // Auto move single eligible token after brief pause
+      // Auto move single eligible token after snappy pause
       setTimeout(() => {
         onPlayerTokenClick(validMoves[0]);
-      }, 350);
+      }, 80);
     } else {
       // Multiple tokens can move, let user tap
       showToast(`Rolled ${roll}. Tap a pulsing pin to move!`, 'info');
       renderLudoBoard();
       updateTurnState();
     }
-  }, 450);
+  }, 180);
 };
 
 // Also click on arrow rolls the dice
@@ -820,7 +843,7 @@ function playBotTurn() {
       setTimeout(() => {
         renderLudoBoard();
         updateTurnState();
-      }, 600);
+      }, 200);
       return;
     }
 
@@ -867,8 +890,8 @@ function playBotTurn() {
       }
 
       updateTurnState();
-    }, 500);
-  }, 450);
+    }, 120);
+  }, 180);
 }
 
 // Game Over & Payout
