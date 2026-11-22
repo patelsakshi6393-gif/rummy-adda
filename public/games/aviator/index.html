@@ -410,78 +410,152 @@
   </div>
 
   <!-- =========================================================================
-       4. DEPOSIT MODAL (MATCHING RUMMYADDA)
+       4. DEPOSIT MODAL (UNIFIED RUMMY ADDA SHARED WALLET)
        ========================================================================= -->
   <div id="modal-deposit" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-    <div class="bg-[#141520] border border-amber-500/40 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+    <div class="bg-[#10172e] border-2 border-amber-500/40 rounded-3xl p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
-        <h3 class="text-lg font-black text-white flex items-center gap-2">Add Cash / Deposit</h3>
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-amber-400/20 flex items-center justify-center text-amber-400 font-bold">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.34 5L2 22l5.18-1.31A9.95 9.95 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm.05 18c-1.59 0-3.09-.45-4.39-1.23l-.31-.19-3.26.83.87-3.15-.21-.34A7.95 7.95 0 014 12c0-4.41 3.59-8 8-8s8 3.59 8 8-3.59 8-7.95 8z"/></svg>
+          </div>
+          <div>
+            <h3 class="text-base sm:text-lg font-black text-white">Add Cash / Deposit</h3>
+            <span class="text-[10px] text-amber-400 font-bold">Rummy Adda Shared Wallet</span>
+          </div>
+        </div>
         <button class="modal-close text-slate-400 hover:text-white font-bold text-xl cursor-pointer">✕</button>
       </div>
 
       <div class="space-y-3">
-        <div id="dep-error-box" class="hidden p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+        <div id="dep-error-box" class="hidden p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
           <span id="dep-error-text"></span>
         </div>
 
-        <label class="block text-xs font-bold text-slate-300">Select Deposit Amount (₹)</label>
-        <div class="grid grid-cols-3 gap-2 font-mono-num font-bold">
-          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10 cursor-pointer" data-amt="100">₹ 100</button>
-          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10 cursor-pointer" data-amt="500">₹ 500</button>
-          <button class="dep-preset py-2 rounded-xl bg-amber-400 text-black border border-amber-400 font-bold cursor-pointer" data-amt="1000">₹ 1,000</button>
+        <label class="block text-xs font-bold text-slate-300">Select Deposit Chips Amount (₹)</label>
+        <div class="grid grid-cols-3 gap-2 font-mono-num font-bold text-xs sm:text-sm">
+          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10" data-amt="100">₹ 100</button>
+          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10" data-amt="500">₹ 500</button>
+          <button class="dep-preset py-2 rounded-xl bg-amber-400 text-black border border-amber-400 font-bold" data-amt="1000">₹ 1,000</button>
+          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10" data-amt="2000">₹ 2,000</button>
+          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10" data-amt="5000">₹ 5,000</button>
+          <button class="dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10" data-amt="10000">₹ 10,000</button>
         </div>
 
         <div class="relative">
           <span class="absolute left-3 top-2.5 text-slate-400 font-mono-num font-bold">₹</span>
-          <input id="deposit-amount-input" type="number" min="10" placeholder="Custom amount (Min ₹10)" class="w-full pl-8 pr-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-sm focus:outline-none focus:border-amber-400">
+          <input id="deposit-amount-input" type="number" min="50" value="1000" placeholder="Custom amount (Min ₹50)" class="w-full pl-8 pr-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-sm focus:outline-none focus:border-amber-400">
         </div>
 
-        <!-- Dynamic QR -->
-        <div id="upi-qr-box" class="p-3 bg-white rounded-2xl flex flex-col items-center justify-center gap-1.5">
-          <img id="upi-qr-image" src="" alt="QR" class="w-40 h-40 object-contain">
-          <span class="text-[10px] text-slate-800 font-bold">Scan with GPay / PhonePe / Paytm / BHIM</span>
+        <div class="space-y-1">
+          <label class="block text-[11px] font-bold text-slate-300">10-Digit Mobile Number</label>
+          <input id="deposit-mobile-input" type="tel" maxlength="10" placeholder="Enter your 10-digit mobile" class="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-xs focus:outline-none focus:border-amber-400">
         </div>
 
-        <input id="deposit-utr-input" type="text" maxlength="12" placeholder="12-digit UTR / UPI Ref Number" class="w-full px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-xs uppercase tracking-wider focus:outline-none focus:border-amber-400">
+        <div class="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-[11px] text-emerald-300 flex items-center gap-2">
+          <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span>Official WhatsApp Support: Instant QR code and verified chip credits in 2 mins.</span>
+        </div>
 
-        <button id="btn-submit-deposit" class="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:brightness-110 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow cursor-pointer">
-          Verify &amp; Credit Deposit
+        <button id="btn-submit-deposit" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-green-500 to-teal-500 hover:brightness-110 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-transform">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.34 5L2 22l5.18-1.31A9.95 9.95 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm.05 18c-1.59 0-3.09-.45-4.39-1.23l-.31-.19-3.26.83.87-3.15-.21-.34A7.95 7.95 0 014 12c0-4.41 3.59-8 8-8s8 3.59 8 8-3.59 8-7.95 8z"/></svg>
+          <span>CONTINUE TO WHATSAPP DEPOSIT</span>
+        </button>
+
+        <!-- Direct Link to Full Website Deposit Page -->
+        <button id="btn-open-wallet-page" class="w-full py-2 text-center text-xs text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer">
+          Open Full Rummy Adda Wallet Page ↗
         </button>
       </div>
     </div>
   </div>
 
   <!-- =========================================================================
-       5. WITHDRAW MODAL (MATCHING RUMMYADDA)
+       5. WITHDRAW MODAL (EXACT RUMMYADDA UNIFIED FLOW: UPI & BANK)
        ========================================================================= -->
   <div id="modal-withdraw" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-    <div class="bg-[#141520] border border-amber-500/40 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+    <div class="bg-[#10172e] border-2 border-amber-500/40 rounded-3xl p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
-        <h3 class="text-lg font-black text-white flex items-center gap-2">Instant Cash Withdrawal</h3>
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-amber-400/20 flex items-center justify-center text-amber-400 font-bold">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+          </div>
+          <div>
+            <h3 class="text-base sm:text-lg font-black text-white">Instant Cash Withdrawal</h3>
+            <span class="text-[10px] text-emerald-400 font-bold">0% Platform Fee • Instant Payout</span>
+          </div>
+        </div>
         <button class="modal-close text-slate-400 hover:text-white font-bold text-xl cursor-pointer">✕</button>
       </div>
 
       <div class="space-y-3">
-        <div id="wd-error-box" class="hidden p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+        <div id="wd-error-box" class="hidden p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
           <span id="wd-error-text"></span>
         </div>
 
-        <div class="p-3 bg-black/40 rounded-xl border border-white/5 flex items-center justify-between text-xs">
-          <span class="text-slate-400">Available Winning Cash:</span>
-          <span id="withdrawable-val" class="font-mono-num font-bold text-emerald-400">₹ 0.00</span>
+        <!-- Available Winnings Card -->
+        <div class="p-3 bg-black/50 rounded-2xl border border-white/10 flex items-center justify-between text-xs">
+          <div>
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Available Winnings Balance</span>
+            <span class="text-[10px] text-slate-500">Min withdrawal ₹100</span>
+          </div>
+          <span id="withdrawable-val" class="font-mono-num font-black text-base text-emerald-400">₹ 0.00</span>
         </div>
 
-        <label class="block text-xs font-bold text-slate-300">Amount (Min ₹100)</label>
-        <div class="relative">
-          <span class="absolute left-3 top-2.5 text-slate-400 font-mono-num font-bold">₹</span>
-          <input id="withdraw-amount-input" type="number" min="100" placeholder="100" class="w-full pl-8 pr-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-sm focus:outline-none focus:border-amber-400">
+        <!-- Method Tabs: UPI ID vs Bank Account -->
+        <div class="grid grid-cols-2 p-1 bg-black/40 rounded-xl border border-white/10 text-xs font-bold">
+          <button id="wd-tab-upi" type="button" class="py-2 rounded-lg bg-amber-400 text-slate-950 font-black shadow transition-all cursor-pointer">
+            UPI ID / VPA
+          </button>
+          <button id="wd-tab-bank" type="button" class="py-2 rounded-lg text-slate-400 hover:text-white font-black transition-all cursor-pointer">
+            Bank Transfer
+          </button>
         </div>
 
-        <label class="block text-xs font-bold text-slate-300">UPI ID / VPA</label>
-        <input id="withdraw-upi-input" type="text" placeholder="e.g. mobile@upi" class="w-full px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-400">
+        <!-- UPI Form Fields -->
+        <div id="wd-upi-fields" class="space-y-1">
+          <label class="block text-[11px] font-bold text-slate-300">Your UPI ID (VPA)</label>
+          <input id="withdraw-upi-input" type="text" placeholder="e.g. mobile@upi or user@paytm" class="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-400">
+        </div>
 
-        <button id="btn-submit-withdraw" class="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 hover:brightness-110 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow cursor-pointer">
-          Request Withdrawal
+        <!-- Bank Form Fields (hidden by default) -->
+        <div id="wd-bank-fields" class="space-y-2 hidden">
+          <div class="space-y-1">
+            <label class="block text-[10px] font-bold text-slate-300">Bank Account Number</label>
+            <input id="withdraw-acc-input" type="text" placeholder="Enter bank account number" class="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-xs focus:outline-none focus:border-amber-400">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="space-y-1">
+              <label class="block text-[10px] font-bold text-slate-300">IFSC Code</label>
+              <input id="withdraw-ifsc-input" type="text" placeholder="e.g. SBIN0001234" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 font-mono-num uppercase text-white text-xs focus:outline-none focus:border-amber-400">
+            </div>
+            <div class="space-y-1">
+              <label class="block text-[10px] font-bold text-slate-300">Account Holder</label>
+              <input id="withdraw-holder-input" type="text" placeholder="Full name as in passbook" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-400">
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-1">
+          <label class="block text-[11px] font-bold text-slate-300">Withdraw Amount (₹)</label>
+          <div class="relative">
+            <span class="absolute left-3 top-2.5 text-slate-400 font-mono-num font-bold">₹</span>
+            <input id="withdraw-amount-input" type="number" min="100" placeholder="100" class="w-full pl-8 pr-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-sm focus:outline-none focus:border-amber-400">
+          </div>
+        </div>
+
+        <div class="space-y-1">
+          <label class="block text-[11px] font-bold text-slate-300">10-Digit Mobile Number</label>
+          <input id="withdraw-mobile-input" type="tel" maxlength="10" placeholder="Registered mobile number" class="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono-num text-white text-xs focus:outline-none focus:border-amber-400">
+        </div>
+
+        <button id="btn-submit-withdraw" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:brightness-110 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer transition-transform">
+          SUBMIT WITHDRAWAL REQUEST
+        </button>
+
+        <!-- Direct Link to Full Website Withdraw Page -->
+        <button id="btn-open-withdraw-page" class="w-full py-2 text-center text-xs text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer">
+          Open Full Rummy Adda Withdraw Page ↗
         </button>
       </div>
     </div>

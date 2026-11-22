@@ -894,8 +894,24 @@ document.querySelectorAll('.modal-close').forEach(btn => {
   };
 });
 
-document.getElementById('btn-open-deposit').onclick = () => openModal(modalDeposit);
-document.getElementById('btn-open-withdraw').onclick = () => openModal(modalWithdraw);
+document.getElementById('btn-open-deposit').onclick = () => {
+  const savedMob = localStorage.getItem('rummy_user_mobile') || currentProfile?.phone || '';
+  if (savedMob) {
+    const depMob = document.getElementById('deposit-mobile-input');
+    if (depMob && !depMob.value) depMob.value = savedMob;
+  }
+  openModal(modalDeposit);
+};
+
+document.getElementById('btn-open-withdraw').onclick = () => {
+  const savedMob = localStorage.getItem('rummy_user_mobile') || currentProfile?.phone || '';
+  if (savedMob) {
+    const wdMob = document.getElementById('withdraw-mobile-input');
+    if (wdMob && !wdMob.value) wdMob.value = savedMob;
+  }
+  updateBalanceUI();
+  openModal(modalWithdraw);
+};
 document.getElementById('btn-open-support').onclick = () => openModal(modalSupport);
 
 // EXACT RUMMYADDA AUTH MODAL TOGGLE & SUBMIT
@@ -1081,163 +1097,328 @@ document.querySelectorAll('.dep-preset').forEach(btn => {
       b.className = 'dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10';
     });
     btn.className = 'dep-preset py-2 rounded-xl bg-amber-400 text-black border border-amber-400 font-bold';
-    document.getElementById('dep-custom-input').value = btn.dataset.amt;
+    const depInput = document.getElementById('deposit-amount-input');
+    if (depInput) depInput.value = btn.dataset.amt;
   };
 });
 
-// Submit WhatsApp Deposit Request
-document.getElementById('btn-submit-deposit').onclick = async () => {
-  const amtInput = document.getElementById('dep-custom-input');
-  const mobInput = document.getElementById('dep-mobile-input');
-  const depErrBox = document.getElementById('dep-error-box');
-  const depErrText = document.getElementById('dep-error-text');
-
-  if (depErrBox) depErrBox.classList.add('hidden');
-
-  const amt = parseInt(amtInput.value, 10);
-  const mobile = mobInput.value.trim().replace(/[^\d]/g, '');
-
-  if (isNaN(amt) || amt < 50) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Minimum deposit amount is ₹50.';
-      depErrBox.classList.remove('hidden');
-    }
-    showToast('Minimum deposit is ₹50.', 'warning');
-    return;
-  }
-  if (amt > 100000) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Maximum deposit amount is ₹1,00,000.';
-      depErrBox.classList.remove('hidden');
-    }
-    showToast('Maximum deposit is ₹1,00,000.', 'warning');
-    return;
-  }
-  if (!mobile || mobile.length !== 10) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Please enter a valid 10-digit mobile number.';
-      depErrBox.classList.remove('hidden');
-    }
-    showToast('Please enter a valid 10-digit mobile number.', 'warning');
-    return;
-  }
-
-  showToast(`Initiating deposit of ₹${amt}...`, 'info');
-
-  const depId = `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const now = new Date().toISOString();
-
-  if (db && currentUser) {
+// Full page wallet navigation handlers
+const btnOpenWalletPage = document.getElementById('btn-open-wallet-page');
+if (btnOpenWalletPage) {
+  btnOpenWalletPage.onclick = () => {
     try {
-      await setDoc(doc(db, 'deposits', depId), {
-        depositId: depId,
+      if (window.top && window.top !== window) {
+        window.top.location.href = '/wallet/deposit';
+      } else {
+        window.location.href = '/wallet/deposit';
+      }
+    } catch (e) {
+      window.location.href = '/wallet/deposit';
+    }
+  };
+}
+
+const btnOpenWithdrawPage = document.getElementById('btn-open-withdraw-page');
+if (btnOpenWithdrawPage) {
+  btnOpenWithdrawPage.onclick = () => {
+    try {
+      if (window.top && window.top !== window) {
+        window.top.location.href = '/wallet/withdraw';
+      } else {
+        window.location.href = '/wallet/withdraw';
+      }
+    } catch (e) {
+      window.location.href = '/wallet/withdraw';
+    }
+  };
+}
+
+// Submit WhatsApp Deposit Request (Exact Rummy Adda Shared Flow)
+const btnSubmitDeposit = document.getElementById('btn-submit-deposit');
+if (btnSubmitDeposit) {
+  btnSubmitDeposit.onclick = async () => {
+    if (!currentUser) {
+      closeModal(modalDeposit);
+      openAuthModal('signin');
+      showToast('Please sign in to deposit cash.', 'info');
+      return;
+    }
+
+    const amtInput = document.getElementById('deposit-amount-input');
+    const mobInput = document.getElementById('deposit-mobile-input');
+    const depErrBox = document.getElementById('dep-error-box');
+    const depErrText = document.getElementById('dep-error-text');
+
+    if (depErrBox) depErrBox.classList.add('hidden');
+
+    const amt = parseFloat(amtInput?.value) || 0;
+    const cleanMobile = (mobInput?.value || '').trim().replace(/[^0-9]/g, '');
+
+    if (isNaN(amt) || amt < 50) {
+      if (depErrText && depErrBox) {
+        depErrText.innerText = 'Minimum deposit chips amount is ₹50.';
+        depErrBox.classList.remove('hidden');
+      }
+      showToast('Minimum deposit is ₹50.', 'warning');
+      return;
+    }
+    if (amt > 100000) {
+      if (depErrText && depErrBox) {
+        depErrText.innerText = 'Maximum deposit amount is ₹1,00,000.';
+        depErrBox.classList.remove('hidden');
+      }
+      showToast('Maximum deposit is ₹1,00,000.', 'warning');
+      return;
+    }
+    if (cleanMobile.length < 10) {
+      if (depErrText && depErrBox) {
+        depErrText.innerText = 'Please enter a valid 10-digit mobile number.';
+        depErrBox.classList.remove('hidden');
+      }
+      showToast('Please enter a valid 10-digit mobile number.', 'warning');
+      return;
+    }
+
+    localStorage.setItem('rummy_user_mobile', cleanMobile);
+    btnSubmitDeposit.disabled = true;
+    btnSubmitDeposit.innerText = 'Opening WhatsApp...';
+
+    try {
+      const depId = `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const now = new Date().toISOString();
+      const playerId = currentProfile?.playerId || `P${currentUser.uid.slice(0, 5).toUpperCase()}`;
+      const userDisplayName = currentProfile?.displayName || currentUser.email?.split('@')[0] || 'Player';
+      const shortId = playerId.slice(-4);
+
+      if (db) {
+        await setDoc(doc(db, 'deposits', depId), {
+          depositId: depId,
+          uid: currentUser.uid,
+          playerId,
+          requestedAmount: amt,
+          mobileNumber: cleanMobile,
+          status: 'pending',
+          whatsappOpenedAt: now,
+          createdAt: now
+        });
+      }
+
+      const formattedAmount = amt.toLocaleString('en-IN');
+      const messageText = 
+`*RUMMY ADDA - DEPOSIT*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${cleanMobile}
+Deposit Amount: ₹${formattedAmount}
+
+Hello, मुझे ₹${formattedAmount} डिपॉजिट करना है। कृपया QR Code / UPI Details भेजें।`;
+
+      const waUrl = `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(messageText)}`;
+      window.open(waUrl, '_blank');
+
+      closeModal(modalDeposit);
+      showToast(`Deposit request for ₹${formattedAmount} opened on WhatsApp. Verified in 2 mins!`, 'success');
+    } catch (e) {
+      console.warn('Deposit error:', e);
+      showToast('Failed to create deposit request. Please try again.', 'error');
+    } finally {
+      btnSubmitDeposit.disabled = false;
+      btnSubmitDeposit.innerText = 'CONTINUE TO WHATSAPP DEPOSIT';
+    }
+  };
+}
+
+// WITHDRAW METHOD TABS (UPI vs Bank)
+let wdMethod = 'upi';
+const wdTabUpi = document.getElementById('wd-tab-upi');
+const wdTabBank = document.getElementById('wd-tab-bank');
+const wdUpiFields = document.getElementById('wd-upi-fields');
+const wdBankFields = document.getElementById('wd-bank-fields');
+
+if (wdTabUpi && wdTabBank) {
+  wdTabUpi.onclick = () => {
+    wdMethod = 'upi';
+    wdTabUpi.className = 'py-2 rounded-lg bg-amber-400 text-slate-950 font-black shadow transition-all cursor-pointer';
+    wdTabBank.className = 'py-2 rounded-lg text-slate-400 hover:text-white font-black transition-all cursor-pointer';
+    if (wdUpiFields) wdUpiFields.classList.remove('hidden');
+    if (wdBankFields) wdBankFields.classList.add('hidden');
+  };
+
+  wdTabBank.onclick = () => {
+    wdMethod = 'bank';
+    wdTabBank.className = 'py-2 rounded-lg bg-amber-400 text-slate-950 font-black shadow transition-all cursor-pointer';
+    wdTabUpi.className = 'py-2 rounded-lg text-slate-400 hover:text-white font-black transition-all cursor-pointer';
+    if (wdBankFields) wdBankFields.classList.remove('hidden');
+    if (wdUpiFields) wdUpiFields.classList.add('hidden');
+  };
+}
+
+// Submit Withdrawal Request (Exact Rummy Adda Shared Flow: UPI & Bank Transfer)
+const btnSubmitWithdraw = document.getElementById('btn-submit-withdraw');
+if (btnSubmitWithdraw) {
+  btnSubmitWithdraw.onclick = async () => {
+    const amtInput = document.getElementById('withdraw-amount-input');
+    const mobInput = document.getElementById('withdraw-mobile-input');
+    const upiInput = document.getElementById('withdraw-upi-input');
+    const accInput = document.getElementById('withdraw-acc-input');
+    const ifscInput = document.getElementById('withdraw-ifsc-input');
+    const holderInput = document.getElementById('withdraw-holder-input');
+
+    const wdErrBox = document.getElementById('wd-error-box');
+    const wdErrText = document.getElementById('wd-error-text');
+
+    if (wdErrBox) wdErrBox.classList.add('hidden');
+
+    if (!currentUser) {
+      closeModal(modalWithdraw);
+      openAuthModal('signin');
+      showToast('Please sign in to withdraw cash.', 'info');
+      return;
+    }
+
+    const amt = parseFloat(amtInput?.value) || 0;
+    const cleanMobile = (mobInput?.value || '').trim().replace(/[^0-9]/g, '');
+    const upi = (upiInput?.value || '').trim();
+    const acc = (accInput?.value || '').trim();
+    const ifsc = (ifscInput?.value || '').trim().toUpperCase();
+    const holder = (holderInput?.value || '').trim();
+    const winBal = realWallet.winBalance || 0;
+
+    if (isNaN(amt) || amt < 100) {
+      if (wdErrText && wdErrBox) {
+        wdErrText.innerText = 'Minimum withdrawal amount is ₹100.';
+        wdErrBox.classList.remove('hidden');
+      }
+      showToast('Minimum withdrawal amount is ₹100.', 'warning');
+      return;
+    }
+    if (amt > winBal) {
+      if (wdErrText && wdErrBox) {
+        wdErrText.innerText = `Insufficient winning balance. You have ₹${winBal.toFixed(2)} available.`;
+        wdErrBox.classList.remove('hidden');
+      }
+      showToast(`Insufficient winning balance (₹${winBal.toFixed(2)}).`, 'warning');
+      return;
+    }
+    if (cleanMobile.length < 10) {
+      if (wdErrText && wdErrBox) {
+        wdErrText.innerText = 'Please enter a valid 10-digit mobile number.';
+        wdErrBox.classList.remove('hidden');
+      }
+      showToast('Please enter a valid 10-digit mobile number.', 'warning');
+      return;
+    }
+
+    if (wdMethod === 'upi') {
+      if (!upi.includes('@')) {
+        if (wdErrText && wdErrBox) {
+          wdErrText.innerText = 'Please enter a valid UPI ID (e.g. mobile@upi or user@paytm).';
+          wdErrBox.classList.remove('hidden');
+        }
+        showToast('Please enter a valid UPI ID.', 'warning');
+        return;
+      }
+    } else {
+      if (!acc || acc.length < 8) {
+        if (wdErrText && wdErrBox) {
+          wdErrText.innerText = 'Please enter a valid Bank Account Number.';
+          wdErrBox.classList.remove('hidden');
+        }
+        showToast('Please enter a valid Bank Account Number.', 'warning');
+        return;
+      }
+      if (!ifsc || ifsc.length < 11) {
+        if (wdErrText && wdErrBox) {
+          wdErrText.innerText = 'Please enter a valid 11-character IFSC Code.';
+          wdErrBox.classList.remove('hidden');
+        }
+        showToast('Please enter a valid 11-character IFSC Code.', 'warning');
+        return;
+      }
+      if (!holder) {
+        if (wdErrText && wdErrBox) {
+          wdErrText.innerText = 'Please enter the Account Holder full name.';
+          wdErrBox.classList.remove('hidden');
+        }
+        showToast('Please enter the Account Holder full name.', 'warning');
+        return;
+      }
+    }
+
+    localStorage.setItem('rummy_user_mobile', cleanMobile);
+    btnSubmitWithdraw.disabled = true;
+    btnSubmitWithdraw.innerText = 'Processing Withdrawal...';
+
+    try {
+      const walletRef = doc(db, 'wallets', currentUser.uid);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(walletRef);
+        const w = snap.data();
+        if ((w.winBalance || 0) < amt) throw new Error('Insufficient winning balance');
+        tx.update(walletRef, {
+          winBalance: (w.winBalance || 0) - amt,
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      const withdrawalId = `wd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const now = new Date().toISOString();
+      const playerId = currentProfile?.playerId || `P${currentUser.uid.slice(0, 5).toUpperCase()}`;
+      const userDisplayName = currentProfile?.displayName || currentUser.email?.split('@')[0] || 'Player';
+      const shortId = playerId.slice(-4);
+      const destination = wdMethod === 'upi' ? upi : `${acc} (${ifsc})`;
+
+      await setDoc(doc(db, 'withdrawals', withdrawalId), {
+        withdrawalId,
         uid: currentUser.uid,
-        playerId: currentProfile?.playerId || 'PLAYER',
-        requestedAmount: amt,
-        mobile: mobile,
+        playerId,
+        amount: amt,
+        fee: 0,
+        netPayable: amt,
+        method: wdMethod,
+        upiId: wdMethod === 'upi' ? upi : '',
+        accountDetails: wdMethod === 'bank' ? { accountNumber: acc, ifsc, accountHolder: holder } : null,
+        mobileNumber: cleanMobile,
         status: 'pending',
         createdAt: now
       });
-    } catch (e) {
-      console.warn('Deposit record error:', e);
-    }
-  }
 
-  const msg = `*RUMMY ADDA / AVIATOR - DEPOSIT*\nPlayer: ${currentProfile?.displayName || 'Player'} (${currentProfile?.playerId || 'AVIATOR'})\nMobile: ${mobile}\nDeposit Amount: ₹${amt.toLocaleString('en-IN')}\n\nHello, मुझे ₹${amt} डिपॉजिट करना है। कृपया UPI QR Code भेजें।`;
-  const url = `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
-  closeModal(modalDeposit);
-};
+      // Transaction log
+      const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      setDoc(doc(db, 'transactions', txId), {
+        id: txId,
+        uid: currentUser.uid,
+        type: 'withdrawal',
+        amount: amt,
+        currency: 'INR',
+        status: 'pending',
+        description: `Withdrawal via ${wdMethod.toUpperCase()} (${destination})`,
+        createdAt: now
+      }).catch(console.warn);
 
-// Submit Withdrawal Request
-document.getElementById('btn-submit-withdraw').onclick = async () => {
-  const amtInput = document.getElementById('wd-amount-input');
-  const upiInput = document.getElementById('wd-upi-input');
-  const wdErrBox = document.getElementById('wd-error-box');
-  const wdErrText = document.getElementById('wd-error-text');
-  const wdSuccBox = document.getElementById('wd-success-box');
-  const wdSuccText = document.getElementById('wd-success-text');
+      // Official WhatsApp Alert
+      const waMsg = 
+`*RUMMY ADDA - WITHDRAWAL REQUEST*
+Player: ${userDisplayName} (#${shortId})
+Mobile: ${cleanMobile}
+Amount: ₹${amt.toLocaleString('en-IN')}
+Payout Method: ${wdMethod.toUpperCase()}
+Destination: ${destination}
 
-  if (wdErrBox) wdErrBox.classList.add('hidden');
-  if (wdSuccBox) wdSuccBox.classList.add('hidden');
+Hello, मैंने ₹${amt.toLocaleString('en-IN')} विड्रॉल की रिक्वेस्ट सबमिट की है। कृपया अप्रूव करें।`;
 
-  if (!currentUser) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Please sign in with your real account first.';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Please sign in with your real account first.', 'warning');
-    openAuthModal('signin');
-    return;
-  }
+      const waUrl = `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(waMsg)}`;
+      window.open(waUrl, '_blank');
 
-  const amt = parseInt(amtInput.value, 10);
-  const upi = upiInput.value.trim();
-  const winBal = realWallet.winBalance || 0;
-
-  if (isNaN(amt) || amt < 100) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Minimum withdrawal amount is ₹100.';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Minimum withdrawal amount is ₹100.', 'warning');
-    return;
-  }
-  if (!upi || !upi.includes('@')) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Please enter a valid UPI ID (e.g. mobile@paytm or name@okaxis).';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Please enter a valid UPI ID.', 'warning');
-    return;
-  }
-  if (amt > winBal) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = `Insufficient withdrawable balance. You have ₹${winBal.toFixed(2)} available.`;
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast(`Insufficient withdrawable balance (₹${winBal.toFixed(2)}).`, 'warning');
-    return;
-  }
-
-  try {
-    const wdId = `wd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await setDoc(doc(db, 'withdrawals', wdId), {
-      withdrawalId: wdId,
-      uid: currentUser.uid,
-      playerId: currentProfile?.playerId || 'PLAYER',
-      amount: amt,
-      method: 'upi',
-      maskedDestination: upi,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
-
-    const walletRef = doc(db, 'wallets', currentUser.uid);
-    await updateDoc(walletRef, {
-      winBalance: Math.max(0, winBal - amt),
-      updatedAt: new Date().toISOString()
-    });
-
-    if (wdSuccText && wdSuccBox) {
-      wdSuccText.innerText = `Withdrawal request for ₹${amt} submitted! Funds will be transferred to ${upi}.`;
-      wdSuccBox.classList.remove('hidden');
-    }
-    showToast(`Withdrawal of ₹${amt} requested successfully!`, 'success');
-
-    setTimeout(() => {
       closeModal(modalWithdraw);
-      if (wdSuccBox) wdSuccBox.classList.add('hidden');
-    }, 1800);
-  } catch (err) {
-    console.error('Withdrawal error:', err);
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Failed to submit withdrawal request. Please check connection and try again.';
-      wdErrBox.classList.remove('hidden');
+      showToast(`Withdrawal of ₹${amt.toLocaleString('en-IN')} submitted! Dispatched via ${wdMethod.toUpperCase()} in 15 mins.`, 'success');
+    } catch (e) {
+      showToast(e.message || 'Withdrawal request failed', 'error');
+    } finally {
+      btnSubmitWithdraw.disabled = false;
+      btnSubmitWithdraw.innerText = 'SUBMIT WITHDRAWAL REQUEST';
     }
-    showToast('Failed to submit withdrawal request.', 'error');
-  }
-};
+  };
+}
 
 // ==========================================
 // 10. AUTH & FIRESTORE REALTIME SYNC
