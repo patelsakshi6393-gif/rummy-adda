@@ -35,12 +35,12 @@ export const HOME_STRAIGHTS = {
   blue: [ [13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7] ]
 };
 
-// Yard Positions for 4 tokens of each color
+// Yard Positions for 4 tokens of each color (Symmetric 2x2 grid inside 4x4 inner yard)
 export const YARD_POSITIONS = {
-  red: [ [2, 2], [2, 3], [3, 2], [3, 3] ],
-  green: [ [2, 11], [2, 12], [3, 11], [3, 12] ],
-  yellow: [ [11, 11], [11, 12], [12, 11], [12, 12] ],
-  blue: [ [11, 2], [11, 3], [12, 2], [12, 3] ]
+  red: [ [2, 2], [2, 4], [4, 2], [4, 4] ],
+  green: [ [2, 11], [2, 13], [4, 11], [4, 13] ],
+  yellow: [ [11, 11], [11, 13], [13, 11], [13, 13] ],
+  blue: [ [11, 2], [11, 4], [13, 2], [13, 4] ]
 };
 
 // Start track index for each color
@@ -61,7 +61,7 @@ export class LudoGame {
     this.platformFeePercent = 10; // 10%
     this.prizePool = Number((stake * playerCount * (1 - this.platformFeePercent / 100)).toFixed(2));
 
-    this.turnOrder = playerCount === 2 ? ['red', 'green'] : ['red', 'green', 'yellow', 'blue'];
+    this.turnOrder = playerCount === 2 ? ['blue', 'green'] : ['blue', 'red', 'green', 'yellow'];
     this.currentTurnIndex = 0;
     this.currentTurn = this.turnOrder[0];
 

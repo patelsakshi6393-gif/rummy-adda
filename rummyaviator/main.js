@@ -790,23 +790,24 @@ seedLiveBets();
 // ==========================================
 // 8. MODE SWITCH (DEMO vs REAL PLAY)
 // ==========================================
-btnModeDemo.onclick = () => {
-  isDemoMode = true;
-  btnModeDemo.className = 'px-2.5 py-1 rounded-full bg-amber-500 text-black font-bold transition-all';
-  btnModePlay.className = 'px-2.5 py-1 rounded-full text-slate-400 hover:text-white font-bold transition-all';
-  updateBalanceUI();
-};
-
-btnModePlay.onclick = () => {
-  isDemoMode = false;
-  btnModePlay.className = 'px-2.5 py-1 rounded-full bg-emerald-500 text-black font-bold transition-all';
-  btnModeDemo.className = 'px-2.5 py-1 rounded-full text-slate-400 hover:text-white font-bold transition-all';
-
-  if (!currentUser) {
-    openAuthModal('signin');
+function switchGameMode(mode) {
+  if (mode === 'play') {
+    isDemoMode = false;
+    btnModePlay.className = 'px-2.5 py-1 rounded-full bg-emerald-500 text-black font-bold transition-all';
+    btnModeDemo.className = 'px-2.5 py-1 rounded-full text-slate-400 hover:text-white font-bold transition-all';
+    if (!currentUser) {
+      openAuthModal('signin');
+    }
+  } else {
+    isDemoMode = true;
+    btnModeDemo.className = 'px-2.5 py-1 rounded-full bg-amber-500 text-black font-bold transition-all';
+    btnModePlay.className = 'px-2.5 py-1 rounded-full text-slate-400 hover:text-white font-bold transition-all';
   }
   updateBalanceUI();
-};
+}
+
+btnModeDemo.onclick = () => switchGameMode('demo');
+btnModePlay.onclick = () => switchGameMode('play');
 
 // Sound toggle (NO EMOJIS - pure SVG)
 document.getElementById('btn-toggle-sound').onclick = () => {
@@ -1235,3 +1236,62 @@ if (auth) {
 
 updateBalanceUI();
 startWaitingPeriod();
+
+// ==========================================
+// 11. NAVIGATION, LANDSCAPE CONTROLS & URL PARAMS
+// ==========================================
+const btnBackLobby = document.getElementById('btn-back-lobby');
+if (btnBackLobby) {
+  btnBackLobby.onclick = () => {
+    try {
+      if (window.top && window.top !== window) {
+        window.top.location.href = '/lobby';
+      } else {
+        window.location.href = '/lobby';
+      }
+    } catch (e) {
+      window.location.href = '/lobby';
+    }
+  };
+}
+
+const btnRequestLandscape = document.getElementById('btn-request-landscape');
+if (btnRequestLandscape) {
+  btnRequestLandscape.onclick = async () => {
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+      if (screen.orientation && screen.orientation.lock) {
+        await screen.orientation.lock('landscape');
+      }
+      showToast('Cockpit landscape mode activated!', 'success');
+    } catch (e) {
+      showToast('Please rotate your device horizontally for landscape view.', 'info');
+    }
+  };
+}
+
+const btnDismissLandscape = document.getElementById('btn-dismiss-landscape');
+if (btnDismissLandscape) {
+  btnDismissLandscape.onclick = () => {
+    const prompt = document.getElementById('landscape-prompt');
+    if (prompt) prompt.style.display = 'none';
+  };
+}
+
+function handleUrlParams() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const stakeParam = parseInt(urlParams.get('stake'), 10);
+  const autostart = urlParams.get('autostart');
+
+  if (stakeParam && !isNaN(stakeParam) && stakeParam >= 10) {
+    p1Stake = stakeParam;
+    updateP1UI();
+  }
+
+  if (autostart === '1') {
+    switchGameMode('play');
+  }
+}
+handleUrlParams();

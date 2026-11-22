@@ -6,9 +6,9 @@ import { firebaseConfig, SUPPORT_WHATSAPP } from './firebase-config.js';
 import { LudoGame, SAFE_SQUARES } from './ludo-engine.js';
 import { sound } from './sound.js';
 
-// ==========================================
-// 1. FIREBASE & SHARED WALLET
-// ==========================================
+// ============================================================================
+// 1. FIREBASE & SHARED WALLET INITIALIZATION
+// ============================================================================
 let app, auth, db;
 try {
   app = initializeApp(firebaseConfig);
@@ -26,34 +26,45 @@ let userWallet = {
   bonusBalance: 0
 };
 
-// Match Settings
+// Match Settings: Player is 'blue', Bot is 'green'
 let selectedPlayers = 2;
-let selectedStake = 1; // Min 1rs for Ludo
+let selectedStake = 1; // Min ₹1 for Ludo
 let game = null;
 let botTimer = null;
-let turnTimerInterval = null;
-let turnTimeRemaining = 15;
+let isMovingToken = false;
 
-// ==========================================
+// Color Palette Matching Image 1
+const COLOR_MAP = {
+  blue: '#0084d6',  // Player "You" (Bottom-Left)
+  green: '#008e36', // Bot (Top-Right)
+  red: '#e01e2b',   // Red (Top-Left)
+  yellow: '#fec300' // Yellow (Bottom-Right)
+};
+
+// ============================================================================
 // 2. DOM ELEMENTS
-// ==========================================
+// ============================================================================
+const mainHeader = document.getElementById('main-header');
 const headerBalanceVal = document.getElementById('header-balance-val');
 const prizePoolDisplay = document.getElementById('prize-pool-display');
 const boardPrizeVal = document.getElementById('board-prize-val');
 const ludoLobbyView = document.getElementById('ludo-lobby-view');
 const ludoBoardView = document.getElementById('ludo-board-view');
 const ludoSvg = document.getElementById('ludo-svg');
+
+const btnTopBack = document.getElementById('btn-top-back');
+const btnHeaderBack = document.getElementById('btn-header-back');
 const btnRollDice = document.getElementById('btn-roll-dice');
 const diceSvg = document.getElementById('dice-svg');
-const turnBadgeP1 = document.getElementById('turn-badge-p1');
-const turnBadgeP2 = document.getElementById('turn-badge-p2');
-const timerP1 = document.getElementById('timer-p1');
-const timerP2 = document.getElementById('timer-p2');
+const botDiceSvg = document.getElementById('bot-dice-svg');
+const botDiceCube = document.getElementById('bot-dice-cube');
+const diceArrowIndicator = document.getElementById('dice-arrow-indicator');
 
 const modalWinner = document.getElementById('modal-winner');
 const winnerTitle = document.getElementById('winner-title');
 const winnerSub = document.getElementById('winner-sub');
 const winnerPayout = document.getElementById('winner-payout');
+const btnPlayAgain = document.getElementById('btn-play-again');
 
 const modalDeposit = document.getElementById('modal-deposit');
 const modalWithdraw = document.getElementById('modal-withdraw');
@@ -65,16 +76,16 @@ const btnInsufficientDeposit = document.getElementById('btn-insufficient-deposit
 const modalLeave = document.getElementById('modal-leave');
 const btnConfirmLeave = document.getElementById('btn-confirm-leave');
 
-// Toast Notification System (Zero Emojis, Pure SVGs)
+// Floating Toast Notification System (Zero Emojis, Pure SVGs)
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
   if (!container) return;
 
   const toast = document.createElement('div');
   const bgColors = {
-    info: 'bg-[#24040a] border-amber-500/40 text-amber-200',
-    success: 'bg-[#0f1f17] border-emerald-500/50 text-emerald-200',
-    error: 'bg-[#220d11] border-rose-500/50 text-rose-200',
+    info: 'bg-[#0f1730] border-amber-500/40 text-amber-200',
+    success: 'bg-[#092317] border-emerald-500/50 text-emerald-200',
+    error: 'bg-[#260c12] border-rose-500/50 text-rose-200',
     warning: 'bg-[#2a1705] border-amber-500/60 text-amber-100'
   };
   const iconSVGs = {
@@ -103,7 +114,26 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// Insufficient Balance Dialog Handler
+// Modal open/close helpers
+function openModal(el) {
+  if (el) {
+    el.classList.remove('hidden');
+    el.classList.add('flex');
+  }
+}
+function closeModal(el) {
+  if (el) {
+    el.classList.add('hidden');
+    el.classList.remove('flex');
+  }
+}
+document.querySelectorAll('.modal-close').forEach(btn => {
+  btn.onclick = () => {
+    btn.closest('.fixed')?.classList.add('hidden');
+    btn.closest('.fixed')?.classList.remove('flex');
+  };
+});
+
 function showInsufficientBalanceDialog(neededAmount, currentPlayable) {
   if (insufficientMsg) {
     insufficientMsg.innerText = `Your balance is ₹${currentPlayable.toFixed(2)}, but entry fee is ₹${neededAmount.toFixed(2)}. Please deposit cash to join the table!`;
@@ -119,28 +149,14 @@ if (btnInsufficientDeposit) {
   };
 }
 
-// Auth Switcher State
-let authMode = 'signin';
-const authTabSignin = document.getElementById('auth-tab-signin');
-const authTabSignup = document.getElementById('auth-tab-signup');
-const authHeading = document.getElementById('auth-heading');
-const authSubheading = document.getElementById('auth-subheading');
-const authConfirmBox = document.getElementById('auth-confirm-box');
-const authReferralBox = document.getElementById('auth-referral-box');
-const authTermsBox = document.getElementById('auth-terms-box');
-const authSubmitText = document.getElementById('auth-submit-text');
-const authErrorBox = document.getElementById('auth-error-box');
-const authErrorText = document.getElementById('auth-error-text');
-const authSuccessBox = document.getElementById('auth-success-box');
-const authSuccessText = document.getElementById('auth-success-text');
+// ============================================================================
+// 3. 3D VECTOR ACRYLIC DICE RENDERER (NO EMOJIS)
+// ============================================================================
+function renderDiceFace(svgElement, val) {
+  if (!svgElement) return;
+  svgElement.innerHTML = '';
 
-// ==========================================
-// 3. REAL 3D ACRYLIC VECTOR DICE (NO EMOJIS)
-// ==========================================
-function renderDiceFace(val) {
-  diceSvg.innerHTML = '';
-
-  // Background rounded acrylic cube with subtle gradient
+  // Background acrylic cube
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   bg.setAttribute('x', '2');
   bg.setAttribute('y', '2');
@@ -148,73 +164,77 @@ function renderDiceFace(val) {
   bg.setAttribute('height', '52');
   bg.setAttribute('rx', '10');
   bg.setAttribute('fill', 'url(#diceCubeGrad)');
-  bg.setAttribute('stroke', '#94a3b8');
+  bg.setAttribute('stroke', '#cbd5e1');
   bg.setAttribute('stroke-width', '1.5');
-  diceSvg.appendChild(bg);
+  svgElement.appendChild(bg);
 
-  // Gradient definition
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <linearGradient id="diceCubeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="60%" stop-color="#f8fafc"/>
+      <stop offset="70%" stop-color="#f5f7fa"/>
       <stop offset="100%" stop-color="#e2e8f0"/>
     </linearGradient>
   `;
-  diceSvg.appendChild(defs);
+  svgElement.appendChild(defs);
 
   if (val <= 0) {
-    // Unrolled initial state: subtle indented dot
+    // Unrolled initial pip
     const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     dot.setAttribute('cx', '28');
     dot.setAttribute('cy', '28');
-    dot.setAttribute('r', '5');
+    dot.setAttribute('r', '4.5');
     dot.setAttribute('fill', '#94a3b8');
     dot.setAttribute('opacity', '0.4');
-    diceSvg.appendChild(dot);
+    svgElement.appendChild(dot);
     return;
   }
 
-  // Draw authentic indented pips
+  // Exact Pip Coordinates for standard dice (1 to 6)
   const pips = {
-    1: [[28, 28, '#dc2626', 7]], // Authentic red center pip for 1
-    2: [[17, 17, '#0f172a', 5], [39, 39, '#0f172a', 5]],
-    3: [[16, 16, '#0f172a', 5], [28, 28, '#0f172a', 5], [40, 40, '#0f172a', 5]],
-    4: [[17, 17, '#0f172a', 5], [39, 17, '#0f172a', 5], [17, 39, '#0f172a', 5], [39, 39, '#0f172a', 5]],
-    5: [[17, 17, '#0f172a', 5], [39, 17, '#0f172a', 5], [28, 28, '#dc2626', 5.5], [17, 39, '#0f172a', 5], [39, 39, '#0f172a', 5]],
-    6: [[17, 15, '#0f172a', 5], [17, 28, '#0f172a', 5], [17, 41, '#0f172a', 5], [39, 15, '#0f172a', 5], [39, 28, '#0f172a', 5], [39, 41, '#0f172a', 5]]
+    1: [[28, 28, '#0f172a', 6]],
+    2: [[18, 18, '#0f172a', 5], [38, 38, '#0f172a', 5]],
+    3: [[17, 17, '#0f172a', 5], [28, 28, '#0f172a', 5], [39, 39, '#0f172a', 5]],
+    4: [[18, 18, '#0f172a', 5], [38, 18, '#0f172a', 5], [18, 38, '#0f172a', 5], [38, 38, '#0f172a', 5]],
+    5: [[18, 18, '#0f172a', 5], [38, 18, '#0f172a', 5], [28, 28, '#0f172a', 5], [18, 38, '#0f172a', 5], [38, 38, '#0f172a', 5]],
+    6: [[18, 16, '#0f172a', 5], [18, 28, '#0f172a', 5], [18, 40, '#0f172a', 5], [38, 16, '#0f172a', 5], [38, 28, '#0f172a', 5], [38, 40, '#0f172a', 5]]
   };
 
   const currentPips = pips[val] || pips[1];
   currentPips.forEach(([cx, cy, fill, r]) => {
-    // Subtle pip inner shadow
+    // Drop shadow inside pip
     const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     shadow.setAttribute('cx', cx);
-    shadow.setAttribute('cy', cy + 0.8);
+    shadow.setAttribute('cy', cy + 0.6);
     shadow.setAttribute('r', r);
-    shadow.setAttribute('fill', 'rgba(0,0,0,0.25)');
-    diceSvg.appendChild(shadow);
+    shadow.setAttribute('fill', 'rgba(0,0,0,0.3)');
+    svgElement.appendChild(shadow);
 
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     circle.setAttribute('cx', cx);
     circle.setAttribute('cy', cy);
     circle.setAttribute('r', r);
     circle.setAttribute('fill', fill);
-    diceSvg.appendChild(circle);
+    svgElement.appendChild(circle);
   });
 }
-renderDiceFace(0);
 
-// ==========================================
+// Initial dice display
+renderDiceFace(diceSvg, 2);
+renderDiceFace(botDiceSvg, 1);
+
+// ============================================================================
 // 4. WALLET & AUTH SYNCHRONIZATION
-// ==========================================
+// ============================================================================
 function getPlayableBalance() {
   return (userWallet.depositBalance || 0) + (userWallet.winBalance || 0) + (userWallet.bonusBalance || 0);
 }
 
 function updateWalletUI() {
   const playable = getPlayableBalance();
-  headerBalanceVal.innerText = `₹ ${playable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (headerBalanceVal) {
+    headerBalanceVal.innerText = `₹ ${playable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
   const wdVal = document.getElementById('withdrawable-val');
   if (wdVal) {
     wdVal.innerText = `₹ ${(userWallet.winBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -223,7 +243,7 @@ function updateWalletUI() {
 
 async function deductMatchFee(amount) {
   if (!currentUser) {
-    openAuthModal('signin');
+    openModal(modalAuth);
     showToast('Please sign in or create an account to play with real cash.', 'info');
     return false;
   }
@@ -268,7 +288,7 @@ async function deductMatchFee(amount) {
       amount: amount,
       currency: 'INR',
       status: 'completed',
-      description: `Ludo Table Entry - ₹${amount}`,
+      description: `Ludo Match Entry - ₹${amount}`,
       createdAt: new Date().toISOString()
     }).catch(console.warn);
 
@@ -311,9 +331,77 @@ async function creditMatchWinnings(winAmount) {
   }
 }
 
-// ==========================================
-// 5. LOBBY SELECTION & MATCH LAUNCH
-// ==========================================
+// ============================================================================
+// 5. MATCH LAUNCH & NAVIGATION
+// ============================================================================
+function updatePrizePool() {
+  const pot = (selectedStake * selectedPlayers * 0.9).toFixed(2);
+  if (prizePoolDisplay) prizePoolDisplay.innerText = `₹ ${pot}`;
+  if (boardPrizeVal) boardPrizeVal.innerText = `₹ ${pot}`;
+}
+updatePrizePool();
+
+async function startLudoMatch() {
+  const ok = await deductMatchFee(selectedStake);
+  if (!ok) return;
+
+  // Initialize Game: Blue ("You") starts first vs Green ("Bot")
+  game = new LudoGame(selectedPlayers, selectedStake);
+
+  if (mainHeader) mainHeader.classList.add('hidden');
+  ludoLobbyView.classList.add('hidden');
+  ludoBoardView.classList.remove('hidden');
+  ludoBoardView.classList.add('flex');
+
+  updatePrizePool();
+  renderDiceFace(diceSvg, 2);
+  renderDiceFace(botDiceSvg, 1);
+  renderLudoBoard();
+  updateTurnState();
+}
+
+function returnToLobby() {
+  if (botTimer) clearTimeout(botTimer);
+  game = null;
+  ludoBoardView.classList.add('hidden');
+  ludoBoardView.classList.remove('flex');
+  if (mainHeader) mainHeader.classList.remove('hidden');
+  ludoLobbyView.classList.remove('hidden');
+
+  // If running inside Next.js iframe, return to parent /lobby
+  try {
+    if (window.top && window.top !== window) {
+      window.top.location.href = '/lobby';
+    }
+  } catch (e) {
+    window.location.href = '/lobby';
+  }
+}
+
+// Back Buttons
+btnTopBack.onclick = () => {
+  if (game && !game.winner) {
+    openModal(modalLeave);
+  } else {
+    returnToLobby();
+  }
+};
+
+if (btnHeaderBack) {
+  btnHeaderBack.onclick = () => {
+    returnToLobby();
+  };
+}
+
+if (btnConfirmLeave) {
+  btnConfirmLeave.onclick = () => {
+    closeModal(modalLeave);
+    returnToLobby();
+    showToast('Match forfeited. Returned to lobby.', 'info');
+  };
+}
+
+// Lobby Controls
 document.getElementById('btn-players-2').onclick = () => {
   selectedPlayers = 2;
   document.getElementById('btn-players-2').className = 'py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 font-black text-sm shadow-md transition-all';
@@ -339,158 +427,159 @@ document.querySelectorAll('.stake-btn').forEach(btn => {
   };
 });
 
-function updatePrizePool() {
-  const pot = (selectedStake * selectedPlayers * 0.9).toFixed(2);
-  prizePoolDisplay.innerText = `₹ ${pot}`;
-  boardPrizeVal.innerText = `₹ ${pot}`;
-}
-updatePrizePool();
-
-document.getElementById('btn-start-ludo-match').onclick = async () => {
-  const ok = await deductMatchFee(selectedStake);
-  if (!ok) return;
-
-  game = new LudoGame(selectedPlayers, selectedStake);
-  ludoLobbyView.classList.add('hidden');
-  ludoBoardView.classList.remove('hidden');
-  ludoBoardView.classList.add('flex');
-
-  renderDiceFace(0);
-  renderLudoBoard();
-  startTurnTimer();
-  updateTurnUI();
+document.getElementById('btn-start-ludo-match').onclick = () => {
+  startLudoMatch();
 };
 
-document.getElementById('btn-leave-match').onclick = () => {
-  openModal(modalLeave);
-};
-
-if (btnConfirmLeave) {
-  btnConfirmLeave.onclick = () => {
-    closeModal(modalLeave);
-    if (botTimer) clearTimeout(botTimer);
-    if (turnTimerInterval) clearInterval(turnTimerInterval);
-    game = null;
-    ludoBoardView.classList.add('hidden');
-    ludoBoardView.classList.remove('flex');
-    ludoLobbyView.classList.remove('hidden');
-    showToast('Match forfeited. Returned to lobby.', 'info');
-  };
-}
-
-// ==========================================
-// 6. SVG 15x15 REAL LUDO BOARD RENDERER
-// ==========================================
+// ============================================================================
+// 6. SVG 15x15 BOARD RENDERER (EXACT IMAGE 1 REPLICA)
+// ============================================================================
 function renderLudoBoard() {
   if (!game) return;
   ludoSvg.innerHTML = '';
 
-  // Gradient definitions for realistic gloss
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  defs.innerHTML = `
-    <!-- Red Yard Gradient -->
-    <linearGradient id="redYardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ef4444"/>
-      <stop offset="100%" stop-color="#b91c1c"/>
-    </linearGradient>
-    <!-- Green Yard Gradient -->
-    <linearGradient id="greenYardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#22c55e"/>
-      <stop offset="100%" stop-color="#15803d"/>
-    </linearGradient>
-    <!-- Yellow Yard Gradient -->
-    <linearGradient id="yellowYardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#facc15"/>
-      <stop offset="100%" stop-color="#ca8a04"/>
-    </linearGradient>
-    <!-- Blue Yard Gradient -->
-    <linearGradient id="blueYardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#1d4ed8"/>
-    </linearGradient>
-    <!-- Golden Vector Star Gradient -->
-    <linearGradient id="goldStarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fffbeb"/>
-      <stop offset="50%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#d97706"/>
-    </linearGradient>
-    <!-- 3D Token Specular Highlight -->
-    <radialGradient id="tokenHighlight" cx="35%" cy="35%" r="65%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.8"/>
-      <stop offset="50%" stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#000000" stop-opacity="0.4"/>
-    </radialGradient>
-  `;
-  ludoSvg.appendChild(defs);
-
-  // Background base
+  // Base white canvas
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   bg.setAttribute('width', '15');
   bg.setAttribute('height', '15');
   bg.setAttribute('fill', '#ffffff');
   ludoSvg.appendChild(bg);
 
-  // 4 Big Quadrants with Rich Gradients & Beveled Inner Podiums
-  drawYard(0, 0, 'url(#redYardGrad)', '#991b1b');
-  drawYard(9, 0, 'url(#greenYardGrad)', '#166534');
-  drawYard(9, 9, 'url(#yellowYardGrad)', '#854d0e');
-  drawYard(0, 9, 'url(#blueYardGrad)', '#1e40af');
+  // 1. Draw 4 Quadrant Yards (Matching Image 1)
+  // Top-Left: RED
+  drawYard(0, 0, COLOR_MAP.red);
+  // Top-Right: GREEN (Bot)
+  drawYard(9, 0, COLOR_MAP.green);
+  // Bottom-Left: BLUE (You)
+  drawYard(0, 9, COLOR_MAP.blue);
+  // Bottom-Right: YELLOW
+  drawYard(9, 9, COLOR_MAP.yellow);
 
-  // Track cells
+  // 2. Yard Labels on the Board: "Bot" over Green yard, "You" under Blue yard
+  drawBoardText(12, 0.75, 'Bot');
+  drawBoardText(3, 14.75, 'You');
+
+  // 3. Draw Track Grid (15x15 cells outside yards and center)
   for (let r = 0; r < 15; r++) {
     for (let c = 0; c < 15; c++) {
       const inYard = (r < 6 && c < 6) || (r < 6 && c > 8) || (r > 8 && c < 6) || (r > 8 && c > 8);
       const inCenter = (r >= 6 && r <= 8 && c >= 6 && c <= 8);
 
       if (!inYard && !inCenter) {
-        let fill = '#f8fafc';
-        if (r === 7 && c >= 1 && c <= 5) fill = '#ef4444';
-        else if (c === 7 && r >= 1 && r <= 5) fill = '#22c55e';
-        else if (r === 7 && c >= 9 && c <= 13) fill = '#eab308';
-        else if (c === 7 && r >= 9 && r <= 13) fill = '#3b82f6';
-        else if (r === 6 && c === 1) fill = '#ef4444';
-        else if (r === 1 && c === 8) fill = '#22c55e';
-        else if (r === 8 && c === 13) fill = '#eab308';
-        else if (r === 13 && c === 6) fill = '#3b82f6';
+        let fill = '#ffffff';
 
-        drawCell(c, r, fill);
+        // Home straight columns / rows
+        if (r === 7 && c >= 1 && c <= 5) fill = COLOR_MAP.red;
+        else if (c === 7 && r >= 1 && r <= 5) fill = COLOR_MAP.green;
+        else if (r === 7 && c >= 9 && c <= 13) fill = COLOR_MAP.yellow;
+        else if (c === 7 && r >= 9 && r <= 13) fill = COLOR_MAP.blue;
+        // Start track tiles
+        else if (r === 6 && c === 1) fill = COLOR_MAP.red;
+        else if (r === 1 && c === 8) fill = COLOR_MAP.green;
+        else if (r === 8 && c === 13) fill = COLOR_MAP.yellow;
+        else if (r === 13 && c === 6) fill = COLOR_MAP.blue;
 
-        // Safe Squares with Clean Vector Golden Stars (NO EMOJIS)
-        const isSafe = (r === 6 && c === 1) || (r === 8 && c === 2) || (r === 2 && c === 6) ||
-                       (r === 1 && c === 8) || (r === 6 && c === 12) || (r === 8 && c === 13) ||
-                       (r === 12 && c === 8) || (r === 13 && c === 6);
-        if (isSafe) {
+        drawTrackCell(c, r, fill);
+
+        // Safe Squares with Clean White Vector 5-Point Stars (Matching Image 1)
+        const isSafeStar = (r === 2 && c === 6) || (r === 8 && c === 2) || (r === 6 && c === 12) || (r === 12 && c === 8);
+        if (isSafeStar) {
           drawVectorStar(c + 0.5, r + 0.5);
         }
+
+        // Track Entrance Arrows (Matching Image 1)
+        if (r === 0 && c === 7) drawArrow(c + 0.5, r + 0.5, 'down', COLOR_MAP.green);
+        if (r === 7 && c === 0) drawArrow(c + 0.5, r + 0.5, 'right', COLOR_MAP.red);
+        if (r === 7 && c === 14) drawArrow(c + 0.5, r + 0.5, 'left', COLOR_MAP.yellow);
+        if (r === 14 && c === 7) drawArrow(c + 0.5, r + 0.5, 'up', COLOR_MAP.blue);
       }
     }
   }
 
-  // Center Home Triangles
-  drawCenterTriangles();
+  // 4. Center Apex Triangles (Red, Green, Yellow, Blue meeting at 7.5, 7.5)
+  drawTriangle('6,6 9,6 7.5,7.5', COLOR_MAP.green);
+  drawTriangle('6,6 6,9 7.5,7.5', COLOR_MAP.red);
+  drawTriangle('9,6 9,9 7.5,7.5', COLOR_MAP.yellow);
+  drawTriangle('6,9 9,9 7.5,7.5', COLOR_MAP.blue);
 
-  // Draw 3D Glossy Tokens
+  // 5. Draw 3D Teardrop Location-Pin Pawns
   drawTokens();
 }
 
-function drawCell(x, y, fill) {
+function drawYard(x, y, colorHex) {
+  // Outer Solid Color Yard (6x6)
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', x);
+  rect.setAttribute('y', y);
+  rect.setAttribute('width', '6');
+  rect.setAttribute('height', '6');
+  rect.setAttribute('fill', colorHex);
+  rect.setAttribute('stroke', '#000000');
+  rect.setAttribute('stroke-width', '0.04');
+  ludoSvg.appendChild(rect);
+
+  // Inner White Square (4x4)
+  const inner = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  inner.setAttribute('x', x + 1);
+  inner.setAttribute('y', y + 1);
+  inner.setAttribute('width', '4');
+  inner.setAttribute('height', '4');
+  inner.setAttribute('fill', '#ffffff');
+  inner.setAttribute('stroke', '#000000');
+  inner.setAttribute('stroke-width', '0.04');
+  ludoSvg.appendChild(inner);
+
+  // 4 Token Yard Spots (2x2 Grid)
+  const spots = [
+    [x + 2, y + 2],
+    [x + 4, y + 2],
+    [x + 2, y + 4],
+    [x + 4, y + 4]
+  ];
+  spots.forEach(([cx, cy]) => {
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', '0.45');
+    circle.setAttribute('fill', colorHex);
+    circle.setAttribute('stroke', 'rgba(0,0,0,0.15)');
+    circle.setAttribute('stroke-width', '0.03');
+    ludoSvg.appendChild(circle);
+  });
+}
+
+function drawTrackCell(x, y, fill) {
   const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   rect.setAttribute('x', x);
   rect.setAttribute('y', y);
   rect.setAttribute('width', '1');
   rect.setAttribute('height', '1');
   rect.setAttribute('fill', fill);
-  rect.setAttribute('stroke', '#cbd5e1');
-  rect.setAttribute('stroke-width', '0.035');
+  rect.setAttribute('stroke', '#475569');
+  rect.setAttribute('stroke-width', '0.03');
   ludoSvg.appendChild(rect);
 }
 
-// Crisp 5-point vector star (Pure SVG geometry, Zero emoji)
+function drawBoardText(x, y, text) {
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  t.setAttribute('x', x);
+  t.setAttribute('y', y);
+  t.setAttribute('fill', '#ffffff');
+  t.setAttribute('font-size', '0.65');
+  t.setAttribute('font-weight', '900');
+  t.setAttribute('font-family', 'Inter, sans-serif');
+  t.setAttribute('text-anchor', 'middle');
+  t.setAttribute('dominant-baseline', 'middle');
+  t.textContent = text;
+  ludoSvg.appendChild(t);
+}
+
+// White 5-Point Star with dark outline (Exact match to Image 1)
 function drawVectorStar(cx, cy) {
   const points = [];
   const spikes = 5;
   const outerR = 0.32;
-  const innerR = 0.14;
+  const innerR = 0.15;
 
   for (let i = 0; i < spikes * 2; i++) {
     const r = i % 2 === 0 ? outerR : innerR;
@@ -500,150 +589,116 @@ function drawVectorStar(cx, cy) {
 
   const star = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
   star.setAttribute('points', points.join(' '));
-  star.setAttribute('fill', 'url(#goldStarGrad)');
-  star.setAttribute('stroke', '#b45309');
-  star.setAttribute('stroke-width', '0.02');
-  star.setAttribute('filter', 'drop-shadow(0 0.04 0.04 rgba(0,0,0,0.3))');
+  star.setAttribute('fill', '#ffffff');
+  star.setAttribute('stroke', '#1e293b');
+  star.setAttribute('stroke-width', '0.035');
+  star.setAttribute('stroke-linejoin', 'round');
   ludoSvg.appendChild(star);
 }
 
-function drawYard(x, y, gradFill, borderColor) {
-  // Main Yard Box with Bevel
-  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  rect.setAttribute('x', x);
-  rect.setAttribute('y', y);
-  rect.setAttribute('width', '6');
-  rect.setAttribute('height', '6');
-  rect.setAttribute('fill', gradFill);
-  rect.setAttribute('stroke', borderColor);
-  rect.setAttribute('stroke-width', '0.06');
-  ludoSvg.appendChild(rect);
-
-  // Inner White Podium Box with rounded corners
-  const inner = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  inner.setAttribute('x', x + 0.9);
-  inner.setAttribute('y', y + 0.9);
-  inner.setAttribute('width', '4.2');
-  inner.setAttribute('height', '4.2');
-  inner.setAttribute('rx', '0.6');
-  inner.setAttribute('fill', '#ffffff');
-  inner.setAttribute('stroke', 'rgba(0,0,0,0.08)');
-  inner.setAttribute('stroke-width', '0.04');
-  ludoSvg.appendChild(inner);
-
-  // 4 Token Yard Pedestals with Golden Rings
-  const offsets = [ [x + 2, y + 2], [x + 4, y + 2], [x + 2, y + 4], [x + 4, y + 4] ];
-  offsets.forEach(([cx, cy]) => {
-    // Outer shadow ring
-    const outerRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    outerRing.setAttribute('cx', cx);
-    outerRing.setAttribute('cy', cy);
-    outerRing.setAttribute('r', '0.65');
-    outerRing.setAttribute('fill', '#f1f5f9');
-    outerRing.setAttribute('stroke', '#cbd5e1');
-    outerRing.setAttribute('stroke-width', '0.04');
-    ludoSvg.appendChild(outerRing);
-
-    // Inner target well
-    const innerRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    innerRing.setAttribute('cx', cx);
-    innerRing.setAttribute('cy', cy);
-    innerRing.setAttribute('r', '0.45');
-    innerRing.setAttribute('fill', gradFill);
-    innerRing.setAttribute('opacity', '0.35');
-    ludoSvg.appendChild(innerRing);
-  });
+function drawArrow(cx, cy, direction, color) {
+  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  let d = '';
+  if (direction === 'down') {
+    d = `M ${cx} ${cy + 0.32} L ${cx - 0.22} ${cy - 0.15} L ${cx - 0.08} ${cy - 0.15} L ${cx - 0.08} ${cy - 0.32} L ${cx + 0.08} ${cy - 0.32} L ${cx + 0.08} ${cy - 0.15} L ${cx + 0.22} ${cy - 0.15} Z`;
+  } else if (direction === 'up') {
+    d = `M ${cx} ${cy - 0.32} L ${cx - 0.22} ${cy + 0.15} L ${cx - 0.08} ${cy + 0.15} L ${cx - 0.08} ${cy + 0.32} L ${cx + 0.08} ${cy + 0.32} L ${cx + 0.08} ${cy + 0.15} L ${cx + 0.22} ${cy + 0.15} Z`;
+  } else if (direction === 'right') {
+    d = `M ${cx + 0.32} ${cy} L ${cx - 0.15} ${cy - 0.22} L ${cx - 0.15} ${cy - 0.08} L ${cx - 0.32} ${cy - 0.08} L ${cx - 0.32} ${cy + 0.08} L ${cx - 0.15} ${cy + 0.08} L ${cx - 0.15} ${cy + 0.22} Z`;
+  } else if (direction === 'left') {
+    d = `M ${cx - 0.32} ${cy} L ${cx + 0.15} ${cy - 0.22} L ${cx + 0.15} ${cy - 0.08} L ${cx + 0.32} ${cy - 0.08} L ${cx + 0.32} ${cy + 0.08} L ${cx + 0.15} ${cy + 0.08} L ${cx + 0.15} ${cy + 0.22} Z`;
+  }
+  arrow.setAttribute('d', d);
+  arrow.setAttribute('fill', color);
+  arrow.setAttribute('stroke', '#1e293b');
+  arrow.setAttribute('stroke-width', '0.02');
+  ludoSvg.appendChild(arrow);
 }
 
-function drawCenterTriangles() {
-  drawPoly('6,6 6,9 7.5,7.5', '#ef4444');
-  drawPoly('6,6 9,6 7.5,7.5', '#22c55e');
-  drawPoly('9,6 9,9 7.5,7.5', '#eab308');
-  drawPoly('6,9 9,9 7.5,7.5', '#3b82f6');
-
-  // Center apex medallion
-  const centerStar = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  centerStar.setAttribute('cx', '7.5');
-  centerStar.setAttribute('cy', '7.5');
-  centerStar.setAttribute('r', '0.5');
-  centerStar.setAttribute('fill', '#ffffff');
-  centerStar.setAttribute('stroke', '#e2e8f0');
-  centerStar.setAttribute('stroke-width', '0.04');
-  ludoSvg.appendChild(centerStar);
-
-  drawVectorStar(7.5, 7.5);
-}
-
-function drawPoly(pts, fill) {
+function drawTriangle(points, fill) {
   const p = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-  p.setAttribute('points', pts);
+  p.setAttribute('points', points);
   p.setAttribute('fill', fill);
-  p.setAttribute('stroke', '#cbd5e1');
-  p.setAttribute('stroke-width', '0.035');
+  p.setAttribute('stroke', '#000000');
+  p.setAttribute('stroke-width', '0.04');
   ludoSvg.appendChild(p);
 }
 
-// 3D GLOSSY MULTI-LAYER TOKENS
+// 3D TEARDROP LOCATION-PIN PAWNS (EXACT IMAGE 1 REPLICA)
 function drawTokens() {
-  const validMoves = (game.currentTurn === 'red' && game.hasRolled) ? game.getValidMoves('red') : [];
+  const isPlayerTurn = game.currentTurn === 'blue';
+  const validMoves = (isPlayerTurn && game.hasRolled && !isMovingToken) ? game.getValidMoves('blue') : [];
 
   game.turnOrder.forEach(color => {
+    const colorHex = COLOR_MAP[color];
+
     game.tokens[color].forEach(tok => {
-      if (tok.step === 56) return;
+      if (tok.step === 56) return; // Reached center home
 
       const [r, c] = game.getTokenGridCoord(color, tok.id);
-      const isMovable = color === 'red' && validMoves.includes(tok.id);
-
-      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', isMovable ? 'token-movable' : '');
+      const isMovable = color === 'blue' && validMoves.includes(tok.id);
 
       const cx = c + 0.5;
       const cy = r + 0.5;
 
-      // 1. Drop shadow for 3D elevation
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      if (isMovable) {
+        g.setAttribute('class', 'token-movable cursor-pointer');
+      }
+
+      // 1. Ground Drop Shadow underneath pin tip
       const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
       shadow.setAttribute('cx', cx);
-      shadow.setAttribute('cy', cy + 0.08);
-      shadow.setAttribute('rx', '0.36');
-      shadow.setAttribute('ry', '0.32');
-      shadow.setAttribute('fill', 'rgba(0,0,0,0.35)');
+      shadow.setAttribute('cy', cy + 0.34);
+      shadow.setAttribute('rx', '0.30');
+      shadow.setAttribute('ry', '0.12');
+      shadow.setAttribute('fill', 'rgba(0,0,0,0.4)');
       g.appendChild(shadow);
 
-      // 2. Outer Metallic Rim
-      const baseRim = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      baseRim.setAttribute('cx', cx);
-      baseRim.setAttribute('cy', cy);
-      baseRim.setAttribute('r', '0.38');
-      baseRim.setAttribute('fill', color === 'red' ? '#991b1b' : (color === 'green' ? '#14532d' : '#854d0e'));
-      baseRim.setAttribute('stroke', isMovable ? '#facc15' : '#ffffff');
-      baseRim.setAttribute('stroke-width', isMovable ? '0.09' : '0.035');
-      g.appendChild(baseRim);
+      // 2. Movable Golden Pulsing Aura Ring
+      if (isMovable) {
+        const aura = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        aura.setAttribute('cx', cx);
+        aura.setAttribute('cy', cy - 0.05);
+        aura.setAttribute('r', '0.45');
+        aura.setAttribute('fill', 'none');
+        aura.setAttribute('stroke', '#facc15');
+        aura.setAttribute('stroke-width', '0.08');
+        aura.setAttribute('class', 'token-movable-ring');
+        g.appendChild(aura);
+      }
 
-      // 3. Colored Gloss Dome
-      const dome = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      dome.setAttribute('cx', cx);
-      dome.setAttribute('cy', cy);
-      dome.setAttribute('r', '0.32');
-      dome.setAttribute('fill', color === 'red' ? '#ef4444' : (color === 'green' ? '#22c55e' : '#eab308'));
-      g.appendChild(dome);
+      // 3. White Location Pin Teardrop Silhouette
+      const pin = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const pinPath = `
+        M ${cx} ${cy + 0.35} 
+        C ${cx - 0.33} ${cy + 0.06}, ${cx - 0.33} ${cy - 0.35}, ${cx} ${cy - 0.35} 
+        C ${cx + 0.33} ${cy - 0.35}, ${cx + 0.33} ${cy + 0.06}, ${cx} ${cy + 0.35} Z
+      `;
+      pin.setAttribute('d', pinPath);
+      pin.setAttribute('fill', '#ffffff');
+      pin.setAttribute('stroke', '#475569');
+      pin.setAttribute('stroke-width', isMovable ? '0.04' : '0.025');
+      g.appendChild(pin);
 
-      // 4. Specular 3D Highlight
-      const highlight = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      highlight.setAttribute('cx', cx);
-      highlight.setAttribute('cy', cy);
-      highlight.setAttribute('r', '0.32');
-      highlight.setAttribute('fill', 'url(#tokenHighlight)');
-      g.appendChild(highlight);
+      // 4. Colored Circular Dot inside the pin head
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', cx);
+      dot.setAttribute('cy', cy - 0.10);
+      dot.setAttribute('r', '0.15');
+      dot.setAttribute('fill', colorHex);
+      dot.setAttribute('stroke', 'rgba(0,0,0,0.2)');
+      dot.setAttribute('stroke-width', '0.02');
+      g.appendChild(dot);
 
-      // 5. Center Golden Crown Ring
-      const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      ring.setAttribute('cx', cx);
-      ring.setAttribute('cy', cy);
-      ring.setAttribute('r', '0.13');
-      ring.setAttribute('fill', 'none');
-      ring.setAttribute('stroke', '#ffffff');
-      ring.setAttribute('stroke-width', '0.035');
-      g.appendChild(ring);
+      // 5. Specular glint on pin
+      const glint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      glint.setAttribute('cx', cx - 0.05);
+      glint.setAttribute('cy', cy - 0.16);
+      glint.setAttribute('r', '0.04');
+      glint.setAttribute('fill', '#ffffff');
+      glint.setAttribute('opacity', '0.8');
+      g.appendChild(glint);
 
       if (isMovable) {
         g.onclick = () => onPlayerTokenClick(tok.id);
@@ -654,79 +709,40 @@ function drawTokens() {
   });
 }
 
-// ==========================================
-// 7. GAMEPLAY, TURN TIMERS & BOT
-// ==========================================
-function startTurnTimer() {
-  if (turnTimerInterval) clearInterval(turnTimerInterval);
-  turnTimeRemaining = 15;
-
-  updateTimerRings();
-  turnTimerInterval = setInterval(() => {
-    turnTimeRemaining -= 1;
-    updateTimerRings();
-
-    if (turnTimeRemaining <= 0) {
-      clearInterval(turnTimerInterval);
-      handleTurnTimeout();
-    }
-  }, 1000);
-}
-
-function updateTimerRings() {
-  const fraction = Math.max(0, turnTimeRemaining / 15);
-  // P1 circumference = 131.95, P2 circumference = 119.38
-  const offsetP1 = 131.95 * (1 - fraction);
-  const offsetP2 = 119.38 * (1 - fraction);
-
-  if (game && game.currentTurn === 'red') {
-    timerP1.style.strokeDashoffset = offsetP1;
-    timerP1.style.stroke = turnTimeRemaining <= 4 ? '#ef4444' : '#f59e0b';
-    timerP2.style.strokeDashoffset = '119.38';
-  } else {
-    timerP2.style.strokeDashoffset = offsetP2;
-    timerP2.style.stroke = turnTimeRemaining <= 4 ? '#ef4444' : '#22c55e';
-    timerP1.style.strokeDashoffset = '131.95';
-  }
-}
-
-function handleTurnTimeout() {
+// ============================================================================
+// 7. GAMEPLAY, TURNS & BOT LOGIC
+// ============================================================================
+function updateTurnState() {
   if (!game) return;
-  if (game.currentTurn === 'red') {
+
+  const isPlayerTurn = game.currentTurn === 'blue';
+
+  if (isPlayerTurn) {
     if (!game.hasRolled) {
-      btnRollDice.click();
+      // Prompt user to roll dice with animated golden arrow
+      diceArrowIndicator.classList.remove('hidden');
+      btnRollDice.disabled = false;
+      btnRollDice.classList.remove('opacity-60', 'pointer-events-none');
     } else {
-      const valid = game.getValidMoves('red');
-      if (valid.length > 0) onPlayerTokenClick(valid[0]);
+      // Rolled, waiting to move token
+      diceArrowIndicator.classList.add('hidden');
+      btnRollDice.disabled = true;
+      btnRollDice.classList.add('opacity-60', 'pointer-events-none');
     }
-  }
-}
-
-function updateTurnUI() {
-  if (!game) return;
-
-  if (game.currentTurn === 'red') {
-    turnBadgeP1.innerText = game.hasRolled ? 'SELECT A TOKEN TO MOVE' : 'YOUR TURN (TAP DICE)';
-    turnBadgeP1.className = 'text-xs font-black text-amber-400 animate-pulse';
-    turnBadgeP2.innerText = 'Waiting';
-    turnBadgeP2.className = 'px-3 py-1 rounded-full text-[10px] font-black uppercase bg-white/5 text-slate-400 border border-white/10';
-    btnRollDice.disabled = game.hasRolled;
-    btnRollDice.classList.remove('opacity-50', 'pointer-events-none');
   } else {
-    turnBadgeP1.innerText = "Opponent is rolling...";
-    turnBadgeP1.className = 'text-xs font-bold text-slate-400';
-    turnBadgeP2.innerText = 'PLAYING TURN';
-    turnBadgeP2.className = 'px-3 py-1 rounded-full text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse';
+    // Bot's Turn
+    diceArrowIndicator.classList.add('hidden');
     btnRollDice.disabled = true;
-    btnRollDice.classList.add('opacity-50', 'pointer-events-none');
+    btnRollDice.classList.add('opacity-60', 'pointer-events-none');
 
-    botTimer = setTimeout(playBotTurn, 900);
+    // Bot auto-play delay
+    botTimer = setTimeout(playBotTurn, 800);
   }
 }
 
-// Player (Red) Dice Roll Action
+// Player (Blue) Dice Roll
 btnRollDice.onclick = () => {
-  if (!game || game.currentTurn !== 'red' || game.hasRolled) return;
+  if (!game || game.currentTurn !== 'blue' || game.hasRolled || isMovingToken) return;
 
   sound.playDiceRoll();
   btnRollDice.classList.add('dice-rolling');
@@ -734,544 +750,499 @@ btnRollDice.onclick = () => {
   setTimeout(() => {
     btnRollDice.classList.remove('dice-rolling');
     const roll = game.rollDice();
-    renderDiceFace(roll);
+    renderDiceFace(diceSvg, roll);
 
-    const validMoves = game.getValidMoves('red');
+    const validMoves = game.getValidMoves('blue');
     if (validMoves.length === 0) {
-      turnBadgeP1.innerText = `Rolled ${roll} - No Valid Moves`;
+      showToast(`Rolled ${roll}. No moves available!`, 'warning');
       setTimeout(() => {
         renderLudoBoard();
-        startTurnTimer();
-        updateTurnUI();
+        updateTurnState();
       }, 700);
     } else if (validMoves.length === 1) {
+      // Auto move single eligible token after brief pause
       setTimeout(() => {
         onPlayerTokenClick(validMoves[0]);
-      }, 400);
+      }, 350);
     } else {
+      // Multiple tokens can move, let user tap
+      showToast(`Rolled ${roll}. Tap a pulsing pin to move!`, 'info');
       renderLudoBoard();
-      updateTurnUI();
+      updateTurnState();
     }
   }, 450);
 };
 
-function onPlayerTokenClick(tokenId) {
-  if (!game || game.currentTurn !== 'red') return;
+// Also click on arrow rolls the dice
+diceArrowIndicator.onclick = () => {
+  btnRollDice.click();
+};
 
-  if (!game.hasRolled) {
-    showToast('Please roll the dice first by tapping on it!', 'warning');
+// Player Moves Token
+async function onPlayerTokenClick(tokenId) {
+  if (!game || game.currentTurn !== 'blue' || !game.hasRolled || isMovingToken) return;
+
+  isMovingToken = true;
+  sound.playTokenMove();
+
+  const res = game.moveToken(tokenId, 'blue');
+  renderLudoBoard();
+
+  if (res.capture) {
+    sound.playCapture();
+    showToast('Bot pawn captured! Extra turn awarded!', 'success');
+  }
+
+  if (res.winner) {
+    handleGameOver('blue');
+    isMovingToken = false;
     return;
   }
 
-  const valid = game.getValidMoves('red');
-  if (!valid.includes(tokenId)) {
-    const tok = game.tokens.red.find(t => t.id === tokenId);
-    if (tok && tok.step === -1) {
-      showToast('Need a 6 to bring token out of base yard!', 'warning');
-    } else {
-      showToast('Cannot move this token. Roll exceeds home path.', 'warning');
-    }
-    return;
-  }
-
-  const res = game.moveToken(tokenId, 'red');
-  if (res.success) {
-    if (res.capture) sound.playCapture();
-    else sound.playTokenMove();
-
-    renderLudoBoard();
-
-    if (res.winner) {
-      handleMatchOver(res.winner);
-      return;
-    }
-
-    startTurnTimer();
-    updateTurnUI();
-  }
+  isMovingToken = false;
+  updateTurnState();
 }
 
-// Bot (Green) Play Turn Logic
+// Bot (Green) AI Player
 function playBotTurn() {
   if (!game || game.currentTurn !== 'green') return;
 
   sound.playDiceRoll();
-  btnRollDice.classList.add('dice-rolling');
+  botDiceCube.classList.add('dice-rolling');
 
   setTimeout(() => {
-    btnRollDice.classList.remove('dice-rolling');
+    botDiceCube.classList.remove('dice-rolling');
     const roll = game.rollDice();
-    renderDiceFace(roll);
+    renderDiceFace(botDiceSvg, roll);
 
-    const valid = game.getValidMoves('green');
-    if (valid.length === 0) {
+    const validMoves = game.getValidMoves('green');
+    if (validMoves.length === 0) {
       setTimeout(() => {
         renderLudoBoard();
-        startTurnTimer();
-        updateTurnUI();
+        updateTurnState();
       }, 600);
       return;
     }
 
-    let chosen = valid[0];
-    const canExit = valid.find(id => game.tokens.green.find(t => t.id === id).step === -1);
-    if (canExit) chosen = canExit;
+    // Bot Decision Engine: Prioritize captures, exiting yard on 6, or advancing closest to home
+    let chosenId = validMoves[0];
+    let highestScore = -1;
+
+    validMoves.forEach(tid => {
+      const tok = game.tokens['green'].find(t => t.id === tid);
+      let score = 0;
+
+      if (tok.step === -1 && roll === 6) {
+        score = 80; // Highly desirable to get token on track
+      } else {
+        const nextStep = tok.step + roll;
+        // Check if lands on opponent token
+        const nextTrackIdx = game.getTrackIndex('green', nextStep);
+        if (!SAFE_SQUARES.includes(nextTrackIdx)) {
+          const capturesPlayer = game.tokens['blue'].some(pt => pt.step >= 0 && pt.step <= 50 && game.getTrackIndex('blue', pt.step) === nextTrackIdx);
+          if (capturesPlayer) score = 100;
+        }
+        score = Math.max(score, nextStep);
+      }
+
+      if (score > highestScore) {
+        highestScore = score;
+        chosenId = tid;
+      }
+    });
 
     setTimeout(() => {
-      const res = game.moveToken(chosen, 'green');
-      if (res.success) {
-        if (res.capture) sound.playCapture();
-        else sound.playTokenMove();
+      sound.playTokenMove();
+      const res = game.moveToken(chosenId, 'green');
+      renderLudoBoard();
 
-        renderLudoBoard();
-
-        if (res.winner) {
-          handleMatchOver(res.winner);
-          return;
-        }
-
-        startTurnTimer();
-        updateTurnUI();
+      if (res.capture) {
+        sound.playCapture();
+        showToast('Bot captured your pawn!', 'warning');
       }
-    }, 600);
+
+      if (res.winner) {
+        handleGameOver('green');
+        return;
+      }
+
+      updateTurnState();
+    }, 500);
   }, 450);
 }
 
-// ==========================================
-// 8. MATCH OVER & SETTLEMENT
-// ==========================================
-async function handleMatchOver(winnerColor) {
-  if (turnTimerInterval) clearInterval(turnTimerInterval);
-  sound.playWin();
+// Game Over & Payout
+function handleGameOver(winnerColor) {
+  if (winnerColor === 'blue') {
+    sound.playWin();
+    try {
+      if (typeof confetti === 'function') {
+        confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+      }
+    } catch (e) {}
 
-  if (winnerColor === 'red') {
-    if (typeof confetti === 'function') {
-      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
-    }
     winnerTitle.innerText = 'YOU WON!';
     winnerTitle.className = 'text-2xl font-black text-amber-300 uppercase tracking-tight';
-    winnerSub.innerText = `Victory! Prize money of ₹${game.prizePool.toFixed(2)} credited to your wallet.`;
+    winnerSub.innerText = 'Congratulations! Prize money has been credited directly to your winning wallet.';
     winnerPayout.innerText = `₹ ${game.prizePool.toFixed(2)}`;
-
-    await creditMatchWinnings(game.prizePool);
+    creditMatchWinnings(game.prizePool);
   } else {
-    winnerTitle.innerText = 'OPPONENT WON';
+    sound.playGameOver();
+    winnerTitle.innerText = 'BOT WON';
     winnerTitle.className = 'text-2xl font-black text-rose-400 uppercase tracking-tight';
-    winnerSub.innerText = 'Better luck next time! Join another table to win cash.';
+    winnerSub.innerText = 'Good game! The Bot reached home first this round. Better luck next match!';
     winnerPayout.innerText = '₹ 0.00';
   }
 
-  modalWinner.classList.remove('hidden');
-  modalWinner.classList.add('flex');
+  openModal(modalWinner);
 }
 
-document.getElementById('btn-play-again').onclick = () => {
-  modalWinner.classList.add('hidden');
-  modalWinner.classList.remove('flex');
-  ludoBoardView.classList.add('hidden');
-  ludoBoardView.classList.remove('flex');
-  ludoLobbyView.classList.remove('hidden');
+btnPlayAgain.onclick = () => {
+  closeModal(modalWinner);
+  startLudoMatch();
 };
 
-// ==========================================
-// 9. MODALS, SUPPORT & EXACT RUMMYADDA AUTH
-// ==========================================
-function openModal(el) { el.classList.remove('hidden'); el.classList.add('flex'); }
-function closeModal(el) { el.classList.add('hidden'); el.classList.remove('flex'); }
-
-document.querySelectorAll('.modal-close').forEach(b => {
-  b.onclick = () => {
-    closeModal(modalDeposit);
-    closeModal(modalWithdraw);
-    closeModal(modalSupport);
-    closeModal(modalAuth);
-    if (modalInsufficient) closeModal(modalInsufficient);
-    if (modalLeave) closeModal(modalLeave);
-  };
-});
-
+// ============================================================================
+// 8. DEPOSIT, WITHDRAW & SUPPORT MODALS
+// ============================================================================
 document.getElementById('btn-open-deposit').onclick = () => openModal(modalDeposit);
-document.getElementById('btn-open-withdraw').onclick = () => openModal(modalWithdraw);
+const btnOpenWd = document.getElementById('btn-open-withdraw');
+if (btnOpenWd) btnOpenWd.onclick = () => openModal(modalWithdraw);
 document.getElementById('btn-open-support').onclick = () => openModal(modalSupport);
 
-// Sound Mute Toggle
-document.getElementById('btn-toggle-sound').onclick = () => {
-  const isMuted = sound.toggleMute();
-  const onIcon = document.getElementById('sound-icon-on');
-  const offIcon = document.getElementById('sound-icon-off');
-  if (isMuted) {
-    onIcon.classList.add('hidden');
-    offIcon.classList.remove('hidden');
-  } else {
-    onIcon.classList.remove('hidden');
-    offIcon.classList.add('hidden');
-  }
-};
-
-// RummyAdda Auth Mode Switcher
-function openAuthModal(mode = 'signin') {
-  setAuthMode(mode);
-  openModal(modalAuth);
+const supportLink = document.getElementById('btn-support-link');
+if (supportLink) {
+  supportLink.href = `https://wa.me/${SUPPORT_WHATSAPP}?text=Hello%20Ludo%20Support,%20I%20need%20assistance.`;
 }
 
-function setAuthMode(mode) {
-  authMode = mode;
-  authErrorBox.classList.add('hidden');
-  authSuccessBox.classList.add('hidden');
+// Deposit Amount Presets
+const depAmtInput = document.getElementById('deposit-amount-input');
+const qrImg = document.getElementById('upi-qr-image');
 
-  if (mode === 'signin') {
-    authTabSignin.className = 'py-2.5 px-3 rounded-xl bg-amber-500 text-black font-extrabold text-xs uppercase tracking-wider shadow';
-    authTabSignup.className = 'py-2.5 px-3 rounded-xl text-slate-400 hover:text-white font-bold text-xs uppercase tracking-wider text-center transition-colors flex items-center justify-center gap-1.5';
-    authHeading.innerHTML = 'Sign In to <span class="text-amber-400">RummyAdda</span>';
-    authSubheading.innerText = 'Enter your mobile number and password to join live tables';
-    authConfirmBox.classList.add('hidden');
-    authReferralBox.classList.add('hidden');
-    authTermsBox.classList.add('hidden');
-    authTermsBox.classList.remove('flex');
-    authSubmitText.innerText = 'SIGN IN NOW';
-  } else {
-    authTabSignup.className = 'py-2.5 px-3 rounded-xl bg-amber-500 text-black font-extrabold text-xs uppercase tracking-wider shadow flex items-center justify-center gap-1.5';
-    authTabSignin.className = 'py-2.5 px-3 rounded-xl text-slate-400 hover:text-white font-bold text-xs uppercase tracking-wider text-center transition-colors';
-    authHeading.innerHTML = 'Create Account on <span class="text-amber-400">RummyAdda</span>';
-    authSubheading.innerText = 'Register now and get ₹20 free cash bonus instantly';
-    authConfirmBox.classList.remove('hidden');
-    authReferralBox.classList.remove('hidden');
-    authTermsBox.classList.remove('hidden');
-    authTermsBox.classList.add('flex');
-    authSubmitText.innerText = 'CREATE ACCOUNT & CLAIM ₹20 BONUS';
+function refreshQR(amount) {
+  const upiId = 'gamepay@upi';
+  const name = 'RummyAddaGaming';
+  const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(name)}&am=${amount}&cu=INR`;
+  if (qrImg) {
+    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiUrl)}`;
   }
 }
+refreshQR(500);
 
-authTabSignin.onclick = () => setAuthMode('signin');
-authTabSignup.onclick = () => setAuthMode('signup');
-
-document.getElementById('btn-open-auth').onclick = () => {
-  if (currentUser) {
-    signOut(auth).then(() => {
-      showToast('Logged out of account.', 'info');
-    });
-  } else {
-    openAuthModal('signin');
-  }
-};
-
-// Helper to translate Firebase Auth error codes into friendly user messages
-function getAuthErrorMessage(err, mode) {
-  const code = err?.code || '';
-  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
-    return 'Invalid mobile number or password. Please verify or click "Create Account".';
-  }
-  if (code === 'auth/email-already-in-use') {
-    return 'An account already exists with this mobile number. Please switch to "Sign In".';
-  }
-  if (code === 'auth/weak-password') {
-    return 'Password must be at least 6 characters.';
-  }
-  if (code === 'auth/too-many-requests') {
-    return 'Too many failed attempts. Please wait 1-2 minutes and try again.';
-  }
-  if (code === 'auth/network-request-failed') {
-    return 'Network connection error. Please check your internet connection.';
-  }
-  return err?.message || (mode === 'signin' ? 'Sign in failed. Please try again.' : 'Failed to create account.');
-}
-
-document.getElementById('auth-form').onsubmit = async (e) => {
-  e.preventDefault();
-  authErrorBox.classList.add('hidden');
-  authSuccessBox.classList.add('hidden');
-
-  const phone = document.getElementById('auth-phone-input').value.trim().replace(/[^\d]/g, '');
-  const pass = document.getElementById('auth-password-input').value;
-
-  if (phone.length !== 10) {
-    authErrorText.innerText = 'Please enter a valid 10-digit mobile number.';
-    authErrorBox.classList.remove('hidden');
-    return;
-  }
-
-  const authEmail = `${phone}@phone.rummyadda.in`;
-
-  if (authMode === 'signin') {
-    try {
-      await signInWithEmailAndPassword(auth, authEmail, pass);
-      showToast('Signed in successfully! Welcome to Ludo Adda.', 'success');
-      closeModal(modalAuth);
-    } catch (err) {
-      console.warn('Sign in error:', err);
-      authErrorText.innerText = getAuthErrorMessage(err, 'signin');
-      authErrorBox.classList.remove('hidden');
-    }
-  } else {
-    const confirmPass = document.getElementById('auth-confirm-input').value;
-    const termsCheck = document.getElementById('auth-terms-check').checked;
-
-    if (pass.length < 6) {
-      authErrorText.innerText = 'Password must be at least 6 characters.';
-      authErrorBox.classList.remove('hidden');
-      return;
-    }
-    if (pass !== confirmPass) {
-      authErrorText.innerText = 'Passwords do not match.';
-      authErrorBox.classList.remove('hidden');
-      return;
-    }
-    if (!termsCheck) {
-      authErrorText.innerText = 'You must confirm you are 18+ years of age.';
-      authErrorBox.classList.remove('hidden');
-      return;
-    }
-
-    try {
-      const userCred = await createUserWithEmailAndPassword(auth, authEmail, pass);
-      const uid = userCred.user.uid;
-      const now = new Date().toISOString();
-      const playerId = 'RA-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-
-      await setDoc(doc(db, 'users', uid), {
-        uid,
-        playerId,
-        displayName: 'Royal Player',
-        phone,
-        email: authEmail,
-        role: 'player',
-        accountStatus: 'active',
-        totalReferrals: 0,
-        referralEarnings: 0,
-        createdAt: now
-      });
-
-      await setDoc(doc(db, 'wallets', uid), {
-        uid,
-        depositBalance: 0,
-        winBalance: 0,
-        bonusBalance: 20, // ₹20 Welcome bonus
-        rewardPoints: 0,
-        welcomeBonusClaimed: true,
-        updatedAt: now
-      });
-
-      const txRef = doc(db, 'transactions', `welcome_${uid}`);
-      await setDoc(txRef, {
-        id: txRef.id,
-        uid,
-        type: 'bonus',
-        amount: 20,
-        currency: 'INR',
-        status: 'completed',
-        description: 'Welcome Bonus - ₹20 Non-withdrawable Game Credits',
-        createdAt: now
-      });
-
-      authSuccessText.innerText = 'Account created successfully! ₹20 bonus added to your wallet.';
-      authSuccessBox.classList.remove('hidden');
-      showToast('Account created! ₹20 bonus added to your wallet.', 'success');
-
-      setTimeout(() => {
-        closeModal(modalAuth);
-      }, 1000);
-    } catch (err) {
-      console.warn('Sign up error:', err);
-      authErrorText.innerText = getAuthErrorMessage(err, 'signup');
-      authErrorBox.classList.remove('hidden');
-    }
-  }
-};
-
-// Deposit preset click handler
 document.querySelectorAll('.dep-preset').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('.dep-preset').forEach(b => {
       b.className = 'dep-preset py-2 rounded-xl bg-white/5 hover:bg-amber-400/20 border border-white/10';
     });
     btn.className = 'dep-preset py-2 rounded-xl bg-amber-400 text-black border border-amber-400 font-bold';
-    document.getElementById('dep-custom-input').value = btn.dataset.amt;
+    const amt = btn.dataset.amt;
+    if (depAmtInput) depAmtInput.value = amt;
+    refreshQR(amt);
   };
 });
 
-// Deposit via WhatsApp Helpline
-document.getElementById('btn-submit-deposit').onclick = async () => {
-  const amtInput = document.getElementById('dep-custom-input');
-  const mobInput = document.getElementById('dep-mobile-input');
-  const depErrBox = document.getElementById('dep-error-box');
-  const depErrText = document.getElementById('dep-error-text');
+if (depAmtInput) {
+  depAmtInput.oninput = () => {
+    const val = parseFloat(depAmtInput.value);
+    if (!isNaN(val) && val > 0) refreshQR(val);
+  };
+}
 
-  if (depErrBox) depErrBox.classList.add('hidden');
-
-  const amt = parseInt(amtInput.value, 10);
-  const mob = mobInput.value.trim().replace(/[^\d]/g, '');
-
-  if (isNaN(amt) || amt < 50) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Minimum deposit amount is ₹50.';
-      depErrBox.classList.remove('hidden');
+// Submit Deposit
+const btnSubmitDeposit = document.getElementById('btn-submit-deposit');
+if (btnSubmitDeposit) {
+  btnSubmitDeposit.onclick = async () => {
+    if (!currentUser) {
+      closeModal(modalDeposit);
+      openModal(modalAuth);
+      return;
     }
-    showToast('Minimum deposit is ₹50.', 'warning');
-    return;
-  }
-  if (amt > 100000) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Maximum deposit amount is ₹1,00,000.';
-      depErrBox.classList.remove('hidden');
+
+    const amt = parseFloat(depAmtInput.value) || 0;
+    const utr = (document.getElementById('deposit-utr-input')?.value || '').trim();
+    const errBox = document.getElementById('dep-error-box');
+    const errTxt = document.getElementById('dep-error-text');
+
+    if (amt < 10) {
+      if (errBox && errTxt) {
+        errBox.classList.remove('hidden');
+        errTxt.innerText = 'Minimum deposit amount is ₹10.';
+      }
+      return;
     }
-    showToast('Maximum deposit is ₹1,00,000.', 'warning');
-    return;
-  }
-  if (!mob || mob.length !== 10) {
-    if (depErrText && depErrBox) {
-      depErrText.innerText = 'Please enter a valid 10-digit mobile number.';
-      depErrBox.classList.remove('hidden');
+    if (utr.length < 12) {
+      if (errBox && errTxt) {
+        errBox.classList.remove('hidden');
+        errTxt.innerText = 'Please enter a valid 12-digit UTR / UPI reference number.';
+      }
+      return;
     }
-    showToast('Please enter a valid 10-digit mobile number.', 'warning');
-    return;
-  }
 
-  showToast(`Initiating deposit of ₹${amt}...`, 'info');
+    btnSubmitDeposit.disabled = true;
+    btnSubmitDeposit.innerText = 'Verifying...';
 
-  const depId = `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const now = new Date().toISOString();
-
-  if (db && currentUser) {
     try {
-      await setDoc(doc(db, 'deposits', depId), {
-        depositId: depId,
+      const depRef = doc(db, 'deposits', `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+      await setDoc(depRef, {
+        id: depRef.id,
         uid: currentUser.uid,
-        playerId: currentProfile?.playerId || 'PLAYER',
-        requestedAmount: amt,
-        mobile: mob,
+        amount: amt,
+        utr: utr,
         status: 'pending',
-        createdAt: now
+        createdAt: new Date().toISOString()
       });
+
+      closeModal(modalDeposit);
+      showToast(`Deposit request for ₹${amt} submitted successfully. Verification takes 2-5 mins.`, 'success');
+      if (depAmtInput) depAmtInput.value = '';
+      const utrEl = document.getElementById('deposit-utr-input');
+      if (utrEl) utrEl.value = '';
     } catch (e) {
-      console.warn('Deposit record error:', e);
+      showToast('Failed to submit deposit. Please try again.', 'error');
+    } finally {
+      btnSubmitDeposit.disabled = false;
+      btnSubmitDeposit.innerText = 'Verify & Credit Deposit';
     }
-  }
+  };
+}
 
-  const msg = `*RUMMY ADDA / LUDO - DEPOSIT*\nPlayer: ${currentProfile?.displayName || 'Player'} (${currentProfile?.playerId || 'LUDO'})\nMobile: ${mob}\nDeposit Amount: ₹${amt.toLocaleString('en-IN')}\n\nHello, मुझे Ludo खेलने के लिए ₹${amt} डिपॉजिट करना है। कृपया UPI Details भेजें।`;
-  window.open(`https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(msg)}`, '_blank');
-  closeModal(modalDeposit);
-};
-
-// Withdrawal Request Submission
-document.getElementById('btn-submit-withdraw').onclick = async () => {
-  const amtInput = document.getElementById('wd-amount-input');
-  const upiInput = document.getElementById('wd-upi-input');
-  const wdErrBox = document.getElementById('wd-error-box');
-  const wdErrText = document.getElementById('wd-error-text');
-  const wdSuccBox = document.getElementById('wd-success-box');
-  const wdSuccText = document.getElementById('wd-success-text');
-
-  if (wdErrBox) wdErrBox.classList.add('hidden');
-  if (wdSuccBox) wdSuccBox.classList.add('hidden');
-
-  if (!currentUser) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Please sign in with your real account first.';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Please sign in with your real account first.', 'warning');
-    openAuthModal('signin');
-    return;
-  }
-
-  const amt = parseInt(amtInput.value, 10);
-  const upi = upiInput.value.trim();
-  const winBal = userWallet.winBalance || 0;
-
-  if (isNaN(amt) || amt < 100) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Minimum withdrawal amount is ₹100.';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Minimum withdrawal amount is ₹100.', 'warning');
-    return;
-  }
-  if (!upi || !upi.includes('@')) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Please enter a valid UPI ID (e.g. mobile@paytm or name@okaxis).';
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast('Please enter a valid UPI ID.', 'warning');
-    return;
-  }
-  if (amt > winBal) {
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = `Insufficient withdrawable balance. You have ₹${winBal.toFixed(2)} available.`;
-      wdErrBox.classList.remove('hidden');
-    }
-    showToast(`Insufficient withdrawable balance (₹${winBal.toFixed(2)}).`, 'warning');
-    return;
-  }
-
-  try {
-    const wdId = `wd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    await setDoc(doc(db, 'withdrawals', wdId), {
-      withdrawalId: wdId,
-      uid: currentUser.uid,
-      playerId: currentProfile?.playerId || 'PLAYER',
-      amount: amt,
-      method: 'upi',
-      maskedDestination: upi,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
-
-    const walletRef = doc(db, 'wallets', currentUser.uid);
-    await updateDoc(walletRef, {
-      winBalance: Math.max(0, winBal - amt),
-      updatedAt: new Date().toISOString()
-    });
-
-    if (wdSuccText && wdSuccBox) {
-      wdSuccText.innerText = `Withdrawal request for ₹${amt} submitted! Funds will be transferred to ${upi}.`;
-      wdSuccBox.classList.remove('hidden');
-    }
-    showToast(`Withdrawal of ₹${amt} requested successfully!`, 'success');
-
-    setTimeout(() => {
+// Submit Withdrawal
+const btnSubmitWithdraw = document.getElementById('btn-submit-withdraw');
+if (btnSubmitWithdraw) {
+  btnSubmitWithdraw.onclick = async () => {
+    if (!currentUser) {
       closeModal(modalWithdraw);
-      if (wdSuccBox) wdSuccBox.classList.add('hidden');
-    }, 1800);
-  } catch (err) {
-    console.error('Withdrawal error:', err);
-    if (wdErrText && wdErrBox) {
-      wdErrText.innerText = 'Failed to submit withdrawal request. Please check connection and try again.';
-      wdErrBox.classList.remove('hidden');
+      openModal(modalAuth);
+      return;
     }
-    showToast('Failed to submit withdrawal request.', 'error');
-  }
-};
 
-// Auth Sync & Auto-Heal Wallets
+    const amt = parseFloat(document.getElementById('withdraw-amount-input')?.value) || 0;
+    const upi = (document.getElementById('withdraw-upi-input')?.value || '').trim();
+    const errBox = document.getElementById('wd-error-box');
+    const errTxt = document.getElementById('wd-error-text');
+
+    if (amt < 100) {
+      if (errBox && errTxt) {
+        errBox.classList.remove('hidden');
+        errTxt.innerText = 'Minimum withdrawal amount is ₹100.';
+      }
+      return;
+    }
+    if ((userWallet.winBalance || 0) < amt) {
+      if (errBox && errTxt) {
+        errBox.classList.remove('hidden');
+        errTxt.innerText = `Insufficient winning balance (₹${(userWallet.winBalance || 0).toFixed(2)}).`;
+      }
+      return;
+    }
+    if (!upi.includes('@')) {
+      if (errBox && errTxt) {
+        errBox.classList.remove('hidden');
+        errTxt.innerText = 'Please enter a valid UPI ID (e.g. mobile@upi).';
+      }
+      return;
+    }
+
+    btnSubmitWithdraw.disabled = true;
+    btnSubmitWithdraw.innerText = 'Processing...';
+
+    try {
+      const walletRef = doc(db, 'wallets', currentUser.uid);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(walletRef);
+        const w = snap.data();
+        if ((w.winBalance || 0) < amt) throw new Error('Insufficient winning balance');
+        tx.update(walletRef, {
+          winBalance: (w.winBalance || 0) - amt,
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      const wdRef = doc(db, 'withdrawals', `wd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+      await setDoc(wdRef, {
+        id: wdRef.id,
+        uid: currentUser.uid,
+        amount: amt,
+        upiId: upi,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      });
+
+      closeModal(modalWithdraw);
+      showToast(`Withdrawal of ₹${amt} requested successfully. Dispatched within 15 mins.`, 'success');
+    } catch (e) {
+      showToast(e.message || 'Withdrawal failed', 'error');
+    } finally {
+      btnSubmitWithdraw.disabled = false;
+      btnSubmitWithdraw.innerText = 'Request Withdrawal';
+    }
+  };
+}
+
+// Sound Toggle
+const btnToggleSound = document.getElementById('btn-toggle-sound');
+const soundIconOn = document.getElementById('sound-icon-on');
+const soundIconOff = document.getElementById('sound-icon-off');
+
+if (btnToggleSound) {
+  btnToggleSound.onclick = () => {
+    const isMuted = sound.toggle();
+    if (soundIconOn && soundIconOff) {
+      if (isMuted) {
+        soundIconOn.classList.add('hidden');
+        soundIconOff.classList.remove('hidden');
+      } else {
+        soundIconOn.classList.remove('hidden');
+        soundIconOff.classList.add('hidden');
+      }
+    }
+  };
+}
+
+// ============================================================================
+// 9. AUTHENTICATION & QUERY PARAMS AUTOSTART
+// ============================================================================
+const btnOpenAuth = document.getElementById('btn-open-auth');
+const authLabel = document.getElementById('auth-label');
+let authMode = 'signin';
+
+const authTabSignin = document.getElementById('auth-tab-signin');
+const authTabSignup = document.getElementById('auth-tab-signup');
+const authHeading = document.getElementById('auth-heading');
+const authSubheading = document.getElementById('auth-subheading');
+const authConfirmBox = document.getElementById('auth-confirm-box');
+const authReferralBox = document.getElementById('auth-referral-box');
+const authTermsBox = document.getElementById('auth-terms-box');
+const authSubmitText = document.getElementById('auth-submit-text');
+const authErrorBox = document.getElementById('auth-error-box');
+const authErrorText = document.getElementById('auth-error-text');
+
+if (btnOpenAuth) {
+  btnOpenAuth.onclick = () => {
+    if (currentUser) {
+      if (confirm('Do you want to log out of your shared wallet?')) {
+        signOut(auth).then(() => showToast('Logged out successfully.', 'info'));
+      }
+    } else {
+      openModal(modalAuth);
+    }
+  };
+}
+
+if (authTabSignin && authTabSignup) {
+  authTabSignin.onclick = () => {
+    authMode = 'signin';
+    authTabSignin.className = 'py-2 rounded-lg bg-amber-400 text-slate-950 shadow transition-all';
+    authTabSignup.className = 'py-2 rounded-lg text-slate-400 hover:text-white transition-all';
+    authHeading.innerText = 'WELCOME BACK';
+    authSubheading.innerText = 'Login to access your shared wallet';
+    authConfirmBox.classList.add('hidden');
+    authReferralBox.classList.add('hidden');
+    authTermsBox.classList.add('hidden');
+    authSubmitText.innerText = 'Sign In & Play';
+  };
+
+  authTabSignup.onclick = () => {
+    authMode = 'signup';
+    authTabSignup.className = 'py-2 rounded-lg bg-amber-400 text-slate-950 shadow transition-all';
+    authTabSignin.className = 'py-2 rounded-lg text-slate-400 hover:text-white transition-all';
+    authHeading.innerText = 'CREATE ACCOUNT';
+    authSubheading.innerText = 'Join Ludo Adda & Play for Real Cash';
+    authConfirmBox.classList.remove('hidden');
+    authReferralBox.classList.remove('hidden');
+    authTermsBox.classList.remove('hidden');
+    authSubmitText.innerText = 'Create Account & Play';
+  };
+}
+
+const authForm = document.getElementById('auth-form');
+if (authForm) {
+  authForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const confirm = document.getElementById('auth-confirm').value;
+
+    if (authErrorBox) authErrorBox.classList.add('hidden');
+
+    if (authMode === 'signup' && password !== confirm) {
+      if (authErrorBox && authErrorText) {
+        authErrorBox.classList.remove('hidden');
+        authErrorText.innerText = 'Passwords do not match.';
+      }
+      return;
+    }
+
+    try {
+      if (authMode === 'signin') {
+        await signInWithEmailAndPassword(auth, email, password);
+        showToast('Signed in successfully!', 'success');
+      } else {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        // Initialize shared wallet
+        await setDoc(doc(db, 'wallets', cred.user.uid), {
+          depositBalance: 0,
+          winBalance: 0,
+          bonusBalance: 50,
+          updatedAt: new Date().toISOString()
+        });
+        showToast('Account created! Welcome bonus ₹50 added.', 'success');
+      }
+      closeModal(modalAuth);
+    } catch (err) {
+      if (authErrorBox && authErrorText) {
+        authErrorBox.classList.remove('hidden');
+        authErrorText.innerText = err.message || 'Authentication failed.';
+      }
+    }
+  };
+}
+
+// Listen to Auth State
+let authInitialized = false;
 if (auth) {
-  onAuthStateChanged(auth, user => {
+  onAuthStateChanged(auth, (user) => {
     currentUser = user;
-    const authLabel = document.getElementById('auth-label');
     if (user) {
-      authLabel.innerText = 'Logout';
-      getDoc(doc(db, 'users', user.uid)).then(s => { if (s.exists()) currentProfile = s.data(); });
-      onSnapshot(doc(db, 'wallets', user.uid), s => {
-        if (s.exists()) {
-          const w = s.data();
-          userWallet = { depositBalance: w.depositBalance || 0, winBalance: w.winBalance || 0, bonusBalance: w.bonusBalance || 0 };
+      if (authLabel) authLabel.innerText = 'Logout';
+      // Sync Wallet from Firestore
+      onSnapshot(doc(db, 'wallets', user.uid), (snap) => {
+        if (snap.exists()) {
+          userWallet = snap.data();
           updateWalletUI();
-        } else {
-          // Auto-heal missing wallet doc
-          const now = new Date().toISOString();
-          setDoc(doc(db, 'wallets', user.uid), {
-            uid: user.uid,
-            depositBalance: 0,
-            winBalance: 0,
-            bonusBalance: 20,
-            welcomeBonusClaimed: true,
-            updatedAt: now
-          }).catch(console.warn);
         }
       });
     } else {
-      authLabel.innerText = 'Sign In';
+      if (authLabel) authLabel.innerText = 'Sign In';
       userWallet = { depositBalance: 0, winBalance: 0, bonusBalance: 0 };
       updateWalletUI();
     }
+
+    // Check autostart query parameter on first auth resolve
+    if (!authInitialized) {
+      authInitialized = true;
+      handleUrlAutostart();
+    }
   });
+} else {
+  handleUrlAutostart();
+}
+
+function handleUrlAutostart() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const autostart = urlParams.get('autostart');
+  const stakeParam = parseInt(urlParams.get('stake'), 10);
+  const playersParam = parseInt(urlParams.get('players'), 10);
+
+  if (stakeParam && !isNaN(stakeParam)) selectedStake = stakeParam;
+  if (playersParam && (playersParam === 2 || playersParam === 4)) selectedPlayers = playersParam;
+  updatePrizePool();
+
+  if (autostart === '1') {
+    // Hide header immediately and launch game
+    if (mainHeader) mainHeader.classList.add('hidden');
+    setTimeout(() => {
+      startLudoMatch();
+    }, 200);
+  }
 }

@@ -817,7 +817,7 @@ export function RummyAddaLobby() {
             {/* LAUNCH BUTTON */}
             <div className="pt-2 flex flex-col items-center">
               <Link
-                href="/aviator"
+                href={`/aviator?autostart=1&stake=${aviatorStake}`}
                 className="w-full max-w-xs py-3.5 px-8 rounded-full bg-gradient-to-r from-rose-600 via-red-500 to-rose-600 hover:brightness-110 active:scale-95 text-white font-black text-base sm:text-lg tracking-wider uppercase shadow-xl shadow-rose-600/30 transition-all flex items-center justify-center gap-2"
               >
                 <Plane className="w-5 h-5" />
@@ -952,7 +952,7 @@ export function RummyAddaLobby() {
             {/* LAUNCH BUTTON */}
             <div className="pt-2 flex flex-col items-center">
               <Link
-                href="/ludo"
+                href={`/ludo?autostart=1&stake=${ludoStake}&players=${ludoPlayers}`}
                 className="w-full max-w-xs py-3.5 px-8 rounded-full bg-gradient-to-r from-emerald-500 via-green-500 to-teal-500 hover:brightness-110 active:scale-95 text-slate-950 font-black text-base sm:text-lg tracking-wider uppercase shadow-xl shadow-emerald-500/30 transition-all flex items-center justify-center gap-2"
               >
                 <Dices className="w-5 h-5" />
