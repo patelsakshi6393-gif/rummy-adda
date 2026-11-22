@@ -3,7 +3,7 @@ import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, on
 import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 import { firebaseConfig, SUPPORT_WHATSAPP } from './firebase-config.js';
-import { LudoGame, SAFE_SQUARES } from './ludo-engine.js';
+import { LudoGame, SAFE_SQUARES, getExpertBotMove } from './ludo-engine.js';
 import { sound } from './sound.js';
 
 // ============================================================================
@@ -26,17 +26,40 @@ let userWallet = {
   bonusBalance: 0
 };
 
-// Match Settings: Player is 'blue', Bot is 'green'
+// Match Settings: Player is 'blue', Opponent is 'green'
 let selectedPlayers = 2;
 let selectedStake = 1; // Min ₹1 for Ludo
 let game = null;
 let botTimer = null;
 let isMovingToken = false;
 
+// 15-Second Turn Timer & Chance System (3 chances, 4th timeout = Automatic OUT)
+let turnTimer = null;
+let turnSeconds = 15;
+let playerStrikes = 0;
+let oppStrikes = 0;
+
+// Matchmaking Pool: Authentic Indian Gamer Personas
+const OPPONENT_POOL = [
+  { name: 'Rahul Sharma', short: 'Rahul', city: 'Delhi NCR', rating: 1480, winRate: '68%', matches: 342, initials: 'RS' },
+  { name: 'Aman Verma', short: 'Aman', city: 'Lucknow', rating: 1520, winRate: '72%', matches: 418, initials: 'AV' },
+  { name: 'Vikram Rathore', short: 'Vikram', city: 'Jaipur', rating: 1410, winRate: '64%', matches: 289, initials: 'VR' },
+  { name: 'Pooja Singh', short: 'Pooja', city: 'Patna', rating: 1560, winRate: '75%', matches: 512, initials: 'PS' },
+  { name: 'Rohan Gupta', short: 'Rohan', city: 'Kolkata', rating: 1440, winRate: '66%', matches: 305, initials: 'RG' },
+  { name: 'Deepak Kumar', short: 'Deepak', city: 'Mumbai', rating: 1495, winRate: '70%', matches: 388, initials: 'DK' },
+  { name: 'Aditya Patel', short: 'Aditya', city: 'Ahmedabad', rating: 1530, winRate: '73%', matches: 460, initials: 'AP' },
+  { name: 'Sneha Roy', short: 'Sneha', city: 'Chandigarh', rating: 1475, winRate: '69%', matches: 320, initials: 'SR' },
+  { name: 'Arjun Mehra', short: 'Arjun', city: 'Indore', rating: 1505, winRate: '71%', matches: 395, initials: 'AM' },
+  { name: 'Suresh Yadav', short: 'Suresh', city: 'Varanasi', rating: 1460, winRate: '67%', matches: 310, initials: 'SY' }
+];
+let matchedOpponent = OPPONENT_POOL[0];
+let matchmakingTimer = null;
+let matchmakingCountdown = 15;
+
 // Color Palette Matching Image 1
 const COLOR_MAP = {
   blue: '#0084d6',  // Player "You" (Bottom-Left)
-  green: '#008e36', // Bot (Top-Right)
+  green: '#008e36', // Opponent (Top-Right)
   red: '#e01e2b',   // Red (Top-Left)
   yellow: '#fec300' // Yellow (Bottom-Right)
 };
@@ -341,7 +364,10 @@ function updatePrizePool() {
 }
 updatePrizePool();
 
-async function startLudoMatch() {
+// ============================================================================
+// 5. MATCHMAKING SYSTEM (15s Search -> Realistic Expert Opponent)
+// ============================================================================
+function startMatchmaking() {
   if (!currentUser) {
     openModal(modalAuth);
     showToast('Please sign in or create an account to play with real cash.', 'info');
@@ -354,6 +380,133 @@ async function startLudoMatch() {
     return;
   }
 
+  // Hide lobby, reveal matchmaking view
+  if (mainHeader) mainHeader.classList.add('hidden');
+  ludoLobbyView.classList.add('hidden');
+  const mmView = document.getElementById('ludo-matchmaking-view');
+  if (mmView) {
+    mmView.classList.remove('hidden');
+    mmView.classList.add('flex');
+  }
+
+  // Populate Stake & Player name
+  const stakeElem = document.getElementById('match-stake-val');
+  if (stakeElem) stakeElem.innerText = selectedStake;
+  const pName = document.getElementById('match-player-name');
+  if (pName) pName.innerText = currentProfile?.displayName || currentUser.email?.split('@')[0] || 'You';
+
+  // Reset Opponent card in matchmaking
+  const oppCard = document.getElementById('matchmaking-opp-card');
+  const oppAvatar = document.getElementById('match-opp-avatar');
+  const oppName = document.getElementById('match-opp-name');
+  const oppStatus = document.getElementById('match-opp-status');
+  const mmHeadline = document.getElementById('matchmaking-headline');
+  const mmSubtext = document.getElementById('matchmaking-subtext');
+  const mmSecs = document.getElementById('matchmaking-seconds');
+
+  if (oppCard) oppCard.className = 'p-3 rounded-2xl bg-[#0f1730] border-2 border-white/10 flex items-center gap-2.5 shadow-lg transition-all';
+  if (oppAvatar) {
+    oppAvatar.className = 'w-10 h-10 rounded-xl bg-slate-800 border border-white/20 flex items-center justify-center text-amber-400 font-black text-sm shrink-0 animate-pulse';
+    oppAvatar.innerText = '?';
+  }
+  if (oppName) {
+    oppName.className = 'text-xs font-black text-slate-400 truncate';
+    oppName.innerText = 'Searching...';
+  }
+  if (oppStatus) oppStatus.innerText = 'Connecting table';
+  if (mmHeadline) mmHeadline.innerText = 'Finding Opponent';
+  if (mmSubtext) mmSubtext.innerText = `Matching with online player for ₹${selectedStake} table...`;
+
+  matchmakingCountdown = 15;
+  if (mmSecs) mmSecs.innerText = '15';
+
+  // Random realistic match time between 3s and 12s
+  const matchDelay = Math.floor(Math.random() * 8000) + 3500;
+  const chosenOpponent = OPPONENT_POOL[Math.floor(Math.random() * OPPONENT_POOL.length)];
+  matchedOpponent = chosenOpponent;
+
+  let matchFound = false;
+  if (matchmakingTimer) clearInterval(matchmakingTimer);
+
+  matchmakingTimer = setInterval(() => {
+    matchmakingCountdown--;
+    if (mmSecs) mmSecs.innerText = matchmakingCountdown;
+
+    if (matchmakingCountdown <= 0 && !matchFound) {
+      matchFound = true;
+      clearInterval(matchmakingTimer);
+      matchmakingTimer = null;
+      triggerMatchFound(chosenOpponent);
+    }
+  }, 1000);
+
+  setTimeout(() => {
+    if (!matchFound && matchmakingTimer) {
+      matchFound = true;
+      clearInterval(matchmakingTimer);
+      matchmakingTimer = null;
+      triggerMatchFound(chosenOpponent);
+    }
+  }, matchDelay);
+}
+
+function cancelMatchmaking() {
+  if (matchmakingTimer) {
+    clearInterval(matchmakingTimer);
+    matchmakingTimer = null;
+  }
+  const mmView = document.getElementById('ludo-matchmaking-view');
+  if (mmView) {
+    mmView.classList.add('hidden');
+    mmView.classList.remove('flex');
+  }
+  if (mainHeader) mainHeader.classList.remove('hidden');
+  ludoLobbyView.classList.remove('hidden');
+  showToast('Matchmaking cancelled.', 'info');
+}
+
+const btnCancelMatchmaking = document.getElementById('btn-cancel-matchmaking');
+if (btnCancelMatchmaking) {
+  btnCancelMatchmaking.onclick = () => cancelMatchmaking();
+}
+
+function triggerMatchFound(opponent) {
+  sound.playMatchFound();
+
+  const oppCard = document.getElementById('matchmaking-opp-card');
+  const oppAvatar = document.getElementById('match-opp-avatar');
+  const oppName = document.getElementById('match-opp-name');
+  const oppStatus = document.getElementById('match-opp-status');
+  const mmHeadline = document.getElementById('matchmaking-headline');
+  const mmSubtext = document.getElementById('matchmaking-subtext');
+
+  if (oppCard) oppCard.className = 'p-3 rounded-2xl bg-emerald-950/70 border-2 border-emerald-400 flex items-center gap-2.5 shadow-2xl transition-all scale-105';
+  if (oppAvatar) {
+    oppAvatar.className = 'w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 border border-emerald-300 flex items-center justify-center text-slate-950 font-black text-sm shrink-0 shadow';
+    oppAvatar.innerText = opponent.initials;
+  }
+  if (oppName) {
+    oppName.className = 'text-xs font-black text-white truncate';
+    oppName.innerText = opponent.name;
+  }
+  if (oppStatus) oppStatus.innerText = `Verified • ${opponent.city}`;
+  if (mmHeadline) mmHeadline.innerText = 'OPPONENT MATCHED!';
+  if (mmSubtext) mmSubtext.innerText = `Starting table with ${opponent.short}...`;
+
+  showToast(`Matched with ${opponent.name} (${opponent.city})!`, 'success');
+
+  setTimeout(() => {
+    const mmView = document.getElementById('ludo-matchmaking-view');
+    if (mmView) {
+      mmView.classList.add('hidden');
+      mmView.classList.remove('flex');
+    }
+    launchBoardGame();
+  }, 1800);
+}
+
+// Launch Board Game after Matchmaking
+async function launchBoardGame() {
   // Instant optimistic balance deduction (0ms latency)
   let rem = selectedStake;
   const dep = Math.min(userWallet.depositBalance || 0, rem);
@@ -365,13 +518,22 @@ async function startLudoMatch() {
   userWallet.winBalance = Math.max(0, (userWallet.winBalance || 0) - rem);
   updateWalletUI();
 
-  // Initialize Game: Blue ("You") starts first vs Green ("Bot")
+  // Reset 15s turn timer & strikes
+  resetStrikes();
+
+  // Initialize Game: Blue ("You") starts first vs Green (Matched Opponent)
   game = new LudoGame(selectedPlayers, selectedStake);
 
   if (mainHeader) mainHeader.classList.add('hidden');
   ludoLobbyView.classList.add('hidden');
   ludoBoardView.classList.remove('hidden');
   ludoBoardView.classList.add('flex');
+
+  // Update Opponent & You Display names
+  const oppNameElem = document.getElementById('opp-display-name');
+  if (oppNameElem) oppNameElem.innerText = matchedOpponent.name;
+  const youNameElem = document.getElementById('you-display-name');
+  if (youNameElem) youNameElem.innerText = currentProfile?.displayName || 'You';
 
   updatePrizePool();
   renderDiceFace(diceSvg, 2);
@@ -383,11 +545,164 @@ async function startLudoMatch() {
   deductMatchFee(selectedStake).catch(console.warn);
 }
 
+// 15-SECOND TURN TIMER & 4TH TIMEOUT OUT SYSTEM
+function resetStrikes() {
+  playerStrikes = 0;
+  oppStrikes = 0;
+  clearTurnTimer();
+  updateStrikesUI();
+}
+
+function updateStrikesUI() {
+  // Player strikes (3 lives)
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById(`you-strike-${i}`);
+    if (dot) {
+      if (playerStrikes >= i) {
+        dot.className = 'w-2 h-2 rounded-full bg-slate-600 border border-slate-500 shadow-sm transition-colors';
+      } else {
+        dot.className = playerStrikes === 2
+          ? 'w-2 h-2 rounded-full bg-rose-500 animate-pulse shadow-sm transition-colors'
+          : 'w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors';
+      }
+    }
+  }
+
+  // Opponent strikes (3 lives)
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById(`opp-strike-${i}`);
+    if (dot) {
+      if (oppStrikes >= i) {
+        dot.className = 'w-2 h-2 rounded-full bg-slate-600 border border-slate-500 shadow-sm transition-colors';
+      } else {
+        dot.className = oppStrikes === 2
+          ? 'w-2 h-2 rounded-full bg-rose-500 animate-pulse shadow-sm transition-colors'
+          : 'w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors';
+      }
+    }
+  }
+}
+
+function clearTurnTimer() {
+  if (turnTimer) {
+    clearInterval(turnTimer);
+    turnTimer = null;
+  }
+  const youBox = document.getElementById('you-timer-box');
+  const oppBox = document.getElementById('opp-timer-box');
+  if (youBox) youBox.classList.add('hidden');
+  if (oppBox) oppBox.classList.add('hidden');
+}
+
+function startTurnTimer(currentTurn) {
+  clearTurnTimer();
+  turnSeconds = 15;
+
+  const youBox = document.getElementById('you-timer-box');
+  const youSec = document.getElementById('you-timer-sec');
+  const oppBox = document.getElementById('opp-timer-box');
+  const oppSec = document.getElementById('opp-timer-sec');
+
+  if (currentTurn === 'blue') {
+    if (youBox && youSec) {
+      youBox.classList.remove('hidden');
+      youBox.className = 'flex items-center px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] font-mono-num animate-pulse';
+      youSec.innerText = '15s';
+    }
+  } else {
+    if (oppBox && oppSec) {
+      oppBox.classList.remove('hidden');
+      oppBox.className = 'flex items-center px-1.5 py-0.2 rounded-full bg-emerald-400 text-slate-950 font-black text-[9px] font-mono-num';
+      oppSec.innerText = '15s';
+    }
+  }
+
+  turnTimer = setInterval(() => {
+    turnSeconds--;
+
+    if (currentTurn === 'blue') {
+      if (youSec) youSec.innerText = `${turnSeconds}s`;
+      if (turnSeconds <= 5) {
+        if (youBox) youBox.className = 'flex items-center px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-black text-[9px] font-mono-num animate-ping';
+        sound.playTick();
+      }
+    } else {
+      if (oppSec) oppSec.innerText = `${turnSeconds}s`;
+      if (turnSeconds <= 5) {
+        if (oppBox) oppBox.className = 'flex items-center px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-black text-[9px] font-mono-num animate-ping';
+        sound.playTick();
+      }
+    }
+
+    if (turnSeconds <= 0) {
+      clearTurnTimer();
+      handleTurnTimeout(currentTurn);
+    }
+  }, 1000);
+}
+
+function handleTurnTimeout(timedOutColor) {
+  if (!game || game.winner) return;
+
+  if (timedOutColor === 'blue') {
+    playerStrikes++;
+    sound.playTimeout();
+    updateStrikesUI();
+
+    if (playerStrikes >= 4) {
+      // 4TH TIMEOUT: AUTOMATIC OUT / FORFEIT
+      showToast('4th Missed Turn! You have been eliminated from the match.', 'error');
+      sound.playLose();
+      handleGameOver('green', 'player_eliminated');
+      return;
+    }
+
+    showToast(`Turn timed out! Missed chance ${playerStrikes}/3 (4th timeout = Out).`, 'warning');
+
+    // If player had already rolled dice, auto-move first eligible token
+    if (game.hasRolled) {
+      const validMoves = game.getValidMoves('blue');
+      if (validMoves.length > 0) {
+        onPlayerTokenClick(validMoves[0]);
+        return;
+      }
+    }
+
+    game.nextTurn();
+    renderLudoBoard();
+    updateTurnState();
+  } else {
+    oppStrikes++;
+    sound.playTimeout();
+    updateStrikesUI();
+
+    if (oppStrikes >= 4) {
+      // OPPONENT 4TH TIMEOUT: AUTOMATIC OUT
+      showToast(`${matchedOpponent.name} missed 4 turns! You won by forfeit!`, 'success');
+      sound.playWin();
+      handleGameOver('blue', 'opp_eliminated');
+      return;
+    }
+
+    showToast(`${matchedOpponent.short} missed chance ${oppStrikes}/3.`, 'info');
+    game.nextTurn();
+    renderLudoBoard();
+    updateTurnState();
+  }
+}
+
 function returnToLobby() {
+  clearTurnTimer();
+  if (matchmakingTimer) clearInterval(matchmakingTimer);
   if (botTimer) clearTimeout(botTimer);
   game = null;
   ludoBoardView.classList.add('hidden');
   ludoBoardView.classList.remove('flex');
+  const mmView = document.getElementById('ludo-matchmaking-view');
+  if (mmView) {
+    mmView.classList.add('hidden');
+    mmView.classList.remove('flex');
+  }
   if (mainHeader) mainHeader.classList.remove('hidden');
   ludoLobbyView.classList.remove('hidden');
 
@@ -451,15 +766,78 @@ document.querySelectorAll('.stake-btn').forEach(btn => {
 });
 
 document.getElementById('btn-start-ludo-match').onclick = () => {
-  startLudoMatch();
+  startMatchmaking();
 };
 
 // ============================================================================
-// 6. SVG 15x15 BOARD RENDERER (EXACT IMAGE 1 REPLICA)
+// 6. SVG 15x15 BOARD RENDERER WITH 3D GOTIS (EXACT IMAGE 1 REPLICA)
 // ============================================================================
+function appendGotiDefs() {
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <!-- Gold Metallic Collar for Pawns -->
+    <linearGradient id="goldCollar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="30%" stop-color="#fde047"/>
+      <stop offset="70%" stop-color="#fffbeb"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+
+    <!-- Blue Goti Gradients -->
+    <radialGradient id="pawnHead_blue" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="45%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#075985"/>
+    </radialGradient>
+    <linearGradient id="pawnBody_blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="60%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+
+    <!-- Green Goti Gradients -->
+    <radialGradient id="pawnHead_green" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#86efac"/>
+      <stop offset="45%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#14532d"/>
+    </radialGradient>
+    <linearGradient id="pawnBody_green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="60%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+
+    <!-- Red Goti Gradients -->
+    <radialGradient id="pawnHead_red" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#fca5a5"/>
+      <stop offset="45%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </radialGradient>
+    <linearGradient id="pawnBody_red" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="60%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+
+    <!-- Yellow Goti Gradients -->
+    <radialGradient id="pawnHead_yellow" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#fef08a"/>
+      <stop offset="45%" stop-color="#eab308"/>
+      <stop offset="100%" stop-color="#713f12"/>
+    </radialGradient>
+    <linearGradient id="pawnBody_yellow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde047"/>
+      <stop offset="60%" stop-color="#eab308"/>
+      <stop offset="100%" stop-color="#a16207"/>
+    </linearGradient>
+  `;
+  ludoSvg.appendChild(defs);
+}
+
 function renderLudoBoard() {
   if (!game) return;
   ludoSvg.innerHTML = '';
+  appendGotiDefs();
 
   // Base white canvas
   const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -471,15 +849,15 @@ function renderLudoBoard() {
   // 1. Draw 4 Quadrant Yards (Matching Image 1)
   // Top-Left: RED
   drawYard(0, 0, COLOR_MAP.red);
-  // Top-Right: GREEN (Bot)
+  // Top-Right: GREEN (Matched Opponent)
   drawYard(9, 0, COLOR_MAP.green);
   // Bottom-Left: BLUE (You)
   drawYard(0, 9, COLOR_MAP.blue);
   // Bottom-Right: YELLOW
   drawYard(9, 9, COLOR_MAP.yellow);
 
-  // 2. Yard Labels on the Board: "Bot" over Green yard, "You" under Blue yard
-  drawBoardText(12, 0.75, 'Bot');
+  // 2. Yard Labels on the Board: Opponent Name over Green yard, "You" under Blue yard
+  drawBoardText(12, 0.75, matchedOpponent?.short || 'Opponent');
   drawBoardText(3, 14.75, 'You');
 
   // 3. Draw Track Grid (15x15 cells outside yards and center)
@@ -525,7 +903,7 @@ function renderLudoBoard() {
   drawTriangle('9,6 9,9 7.5,7.5', COLOR_MAP.yellow);
   drawTriangle('6,9 9,9 7.5,7.5', COLOR_MAP.blue);
 
-  // 5. Draw 3D Teardrop Location-Pin Pawns
+  // 5. Draw 3D Sculpted Gotis
   drawTokens();
 }
 
@@ -588,7 +966,7 @@ function drawBoardText(x, y, text) {
   t.setAttribute('x', x);
   t.setAttribute('y', y);
   t.setAttribute('fill', '#ffffff');
-  t.setAttribute('font-size', '0.65');
+  t.setAttribute('font-size', '0.62');
   t.setAttribute('font-weight', '900');
   t.setAttribute('font-family', 'Inter, sans-serif');
   t.setAttribute('text-anchor', 'middle');
@@ -647,81 +1025,141 @@ function drawTriangle(points, fill) {
   ludoSvg.appendChild(p);
 }
 
-// 3D TEARDROP LOCATION-PIN PAWNS (EXACT IMAGE 1 REPLICA)
+// 3D REALISTIC ACRYLIC GOTIS (PREMIUM SCULPTED PAWNS)
 function drawTokens() {
   const isPlayerTurn = game.currentTurn === 'blue';
   const validMoves = (isPlayerTurn && game.hasRolled && !isMovingToken) ? game.getValidMoves('blue') : [];
 
+  // Group tokens by cell coordinate to prevent stacking overlap
+  const cellOccupancy = {};
   game.turnOrder.forEach(color => {
-    const colorHex = COLOR_MAP[color];
-
     game.tokens[color].forEach(tok => {
-      if (tok.step === 56) return; // Reached center home
-
+      if (tok.step === 56) return; // Finished in home
       const [r, c] = game.getTokenGridCoord(color, tok.id);
+      const key = `${r}_${c}`;
+      if (!cellOccupancy[key]) cellOccupancy[key] = [];
+      cellOccupancy[key].push({ color, tok, r, c });
+    });
+  });
+
+  // Render tokens with intelligent fanning on shared cells
+  Object.values(cellOccupancy).forEach(group => {
+    const totalInCell = group.length;
+
+    group.forEach((item, index) => {
+      const { color, tok, r, c } = item;
       const isMovable = color === 'blue' && validMoves.includes(tok.id);
 
-      const cx = c + 0.5;
-      const cy = r + 0.5;
+      // Center with intelligent spread if multiple pawns share cell
+      let cx = c + 0.5;
+      let cy = r + 0.5;
+
+      if (totalInCell === 2 && tok.step >= 0) {
+        cx += (index === 0 ? -0.15 : 0.15);
+      } else if (totalInCell >= 3 && tok.step >= 0) {
+        cx += (index - (totalInCell - 1) / 2) * 0.18;
+      }
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       if (isMovable) {
         g.setAttribute('class', 'token-movable cursor-pointer');
       }
 
-      // 1. Ground Drop Shadow underneath pin tip
+      // 1. Soft Ground Drop Shadow Underneath
       const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
       shadow.setAttribute('cx', cx);
       shadow.setAttribute('cy', cy + 0.34);
-      shadow.setAttribute('rx', '0.30');
-      shadow.setAttribute('ry', '0.12');
-      shadow.setAttribute('fill', 'rgba(0,0,0,0.4)');
+      shadow.setAttribute('rx', '0.28');
+      shadow.setAttribute('ry', '0.11');
+      shadow.setAttribute('fill', 'rgba(0,0,0,0.45)');
       g.appendChild(shadow);
 
       // 2. Movable Golden Pulsing Aura Ring
       if (isMovable) {
         const aura = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         aura.setAttribute('cx', cx);
-        aura.setAttribute('cy', cy - 0.05);
-        aura.setAttribute('r', '0.45');
+        aura.setAttribute('cy', cy + 0.05);
+        aura.setAttribute('r', '0.44');
         aura.setAttribute('fill', 'none');
         aura.setAttribute('stroke', '#facc15');
-        aura.setAttribute('stroke-width', '0.08');
+        aura.setAttribute('stroke-width', '0.07');
+        aura.setAttribute('stroke-dasharray', '0.16 0.08');
         aura.setAttribute('class', 'token-movable-ring');
         g.appendChild(aura);
       }
 
-      // 3. White Location Pin Teardrop Silhouette
-      const pin = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const pinPath = `
-        M ${cx} ${cy + 0.35} 
-        C ${cx - 0.33} ${cy + 0.06}, ${cx - 0.33} ${cy - 0.35}, ${cx} ${cy - 0.35} 
-        C ${cx + 0.33} ${cy - 0.35}, ${cx + 0.33} ${cy + 0.06}, ${cx} ${cy + 0.35} Z
+      // 3. 3D Weighted Pedestal Base Rim
+      const baseRim = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+      baseRim.setAttribute('cx', cx);
+      baseRim.setAttribute('cy', cy + 0.28);
+      baseRim.setAttribute('rx', '0.27');
+      baseRim.setAttribute('ry', '0.11');
+      baseRim.setAttribute('fill', 'rgba(15,23,42,0.85)');
+      baseRim.setAttribute('stroke', 'rgba(255,255,255,0.4)');
+      baseRim.setAttribute('stroke-width', '0.02');
+      g.appendChild(baseRim);
+
+      const baseInner = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+      baseInner.setAttribute('cx', cx);
+      baseInner.setAttribute('cy', cy + 0.26);
+      baseInner.setAttribute('rx', '0.24');
+      baseInner.setAttribute('ry', '0.09');
+      baseInner.setAttribute('fill', `url(#pawnHead_${color})`);
+      g.appendChild(baseInner);
+
+      // 4. Smooth Sculpted Conical Body
+      const body = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const bodyD = `
+        M ${cx - 0.22} ${cy + 0.26}
+        C ${cx - 0.16} ${cy + 0.10}, ${cx - 0.09} ${cy - 0.02}, ${cx - 0.10} ${cy - 0.08}
+        L ${cx + 0.10} ${cy - 0.08}
+        C ${cx + 0.09} ${cy - 0.02}, ${cx + 0.16} ${cy + 0.10}, ${cx + 0.22} ${cy + 0.26} Z
       `;
-      pin.setAttribute('d', pinPath);
-      pin.setAttribute('fill', '#ffffff');
-      pin.setAttribute('stroke', '#475569');
-      pin.setAttribute('stroke-width', isMovable ? '0.04' : '0.025');
-      g.appendChild(pin);
+      body.setAttribute('d', bodyD);
+      body.setAttribute('fill', `url(#pawnBody_${color})`);
+      body.setAttribute('stroke', 'rgba(0,0,0,0.25)');
+      body.setAttribute('stroke-width', '0.02');
+      g.appendChild(body);
 
-      // 4. Colored Circular Dot inside the pin head
-      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      dot.setAttribute('cx', cx);
-      dot.setAttribute('cy', cy - 0.10);
-      dot.setAttribute('r', '0.15');
-      dot.setAttribute('fill', colorHex);
-      dot.setAttribute('stroke', 'rgba(0,0,0,0.2)');
-      dot.setAttribute('stroke-width', '0.02');
-      g.appendChild(dot);
+      // 5. Polished Metallic Collar Ring
+      const collar = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+      collar.setAttribute('cx', cx);
+      collar.setAttribute('cy', cy - 0.08);
+      collar.setAttribute('rx', '0.13');
+      collar.setAttribute('ry', '0.05');
+      collar.setAttribute('fill', 'url(#goldCollar)');
+      collar.setAttribute('stroke', 'rgba(0,0,0,0.3)');
+      collar.setAttribute('stroke-width', '0.015');
+      g.appendChild(collar);
 
-      // 5. Specular glint on pin
-      const glint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      // 6. Spherical Crown Dome Head
+      const head = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      head.setAttribute('cx', cx);
+      head.setAttribute('cy', cy - 0.20);
+      head.setAttribute('r', '0.16');
+      head.setAttribute('fill', `url(#pawnHead_${color})`);
+      head.setAttribute('stroke', 'rgba(0,0,0,0.25)');
+      head.setAttribute('stroke-width', '0.02');
+      g.appendChild(head);
+
+      // 7. Specular 3D Highlight Glints
+      const glint = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
       glint.setAttribute('cx', cx - 0.05);
-      glint.setAttribute('cy', cy - 0.16);
-      glint.setAttribute('r', '0.04');
+      glint.setAttribute('cy', cy - 0.25);
+      glint.setAttribute('rx', '0.06');
+      glint.setAttribute('ry', '0.04');
       glint.setAttribute('fill', '#ffffff');
-      glint.setAttribute('opacity', '0.8');
+      glint.setAttribute('opacity', '0.85');
       g.appendChild(glint);
+
+      const sheen = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      sheen.setAttribute('d', `M ${cx - 0.08} ${cy + 0.02} Q ${cx - 0.05} ${cy + 0.14} ${cx - 0.12} ${cy + 0.22}`);
+      sheen.setAttribute('stroke', '#ffffff');
+      sheen.setAttribute('stroke-width', '0.025');
+      sheen.setAttribute('fill', 'none');
+      sheen.setAttribute('opacity', '0.45');
+      sheen.setAttribute('stroke-linecap', 'round');
+      g.appendChild(sheen);
 
       if (isMovable) {
         g.onclick = () => onPlayerTokenClick(tok.id);
@@ -733,33 +1171,35 @@ function drawTokens() {
 }
 
 // ============================================================================
-// 7. GAMEPLAY, TURNS & BOT LOGIC
+// 7. GAMEPLAY, 15S TURN TIMER & EXPERT AI BOT LOGIC
 // ============================================================================
 function updateTurnState() {
-  if (!game) return;
+  if (!game || game.winner) return;
 
   const isPlayerTurn = game.currentTurn === 'blue';
 
   if (isPlayerTurn) {
     if (!game.hasRolled) {
-      // Prompt user to roll dice with animated golden arrow
+      // Start 15s timer for player turn
+      startTurnTimer('blue');
       diceArrowIndicator.classList.remove('hidden');
       btnRollDice.disabled = false;
       btnRollDice.classList.remove('opacity-60', 'pointer-events-none');
     } else {
-      // Rolled, waiting to move token
+      // Rolled, waiting to move token within same 15s window
       diceArrowIndicator.classList.add('hidden');
       btnRollDice.disabled = true;
       btnRollDice.classList.add('opacity-60', 'pointer-events-none');
     }
   } else {
-    // Bot's Turn
+    // Opponent's Turn (Green)
+    startTurnTimer('green');
     diceArrowIndicator.classList.add('hidden');
     btnRollDice.disabled = true;
     btnRollDice.classList.add('opacity-60', 'pointer-events-none');
 
-    // Bot auto-play delay - Fast 220ms
-    botTimer = setTimeout(playBotTurn, 220);
+    // Realistic human-like thinking delay before opponent rolls
+    botTimer = setTimeout(playBotTurn, Math.floor(Math.random() * 400) + 650);
   }
 }
 
@@ -778,18 +1218,19 @@ btnRollDice.onclick = () => {
     const validMoves = game.getValidMoves('blue');
     if (validMoves.length === 0) {
       showToast(`Rolled ${roll}. No moves available!`, 'warning');
+      clearTurnTimer();
       setTimeout(() => {
         renderLudoBoard();
         updateTurnState();
-      }, 250);
+      }, 350);
     } else if (validMoves.length === 1) {
       // Auto move single eligible token after snappy pause
       setTimeout(() => {
         onPlayerTokenClick(validMoves[0]);
-      }, 80);
+      }, 100);
     } else {
       // Multiple tokens can move, let user tap
-      showToast(`Rolled ${roll}. Tap a pulsing pin to move!`, 'info');
+      showToast(`Rolled ${roll}. Tap a pulsing goti to move!`, 'info');
       renderLudoBoard();
       updateTurnState();
     }
@@ -805,6 +1246,7 @@ diceArrowIndicator.onclick = () => {
 async function onPlayerTokenClick(tokenId) {
   if (!game || game.currentTurn !== 'blue' || !game.hasRolled || isMovingToken) return;
 
+  clearTurnTimer();
   isMovingToken = true;
   sound.playTokenMove();
 
@@ -813,7 +1255,7 @@ async function onPlayerTokenClick(tokenId) {
 
   if (res.capture) {
     sound.playCapture();
-    showToast('Bot pawn captured! Extra turn awarded!', 'success');
+    showToast(`${matchedOpponent.short}'s goti captured! Extra turn awarded!`, 'success');
   }
 
   if (res.winner) {
@@ -826,7 +1268,7 @@ async function onPlayerTokenClick(tokenId) {
   updateTurnState();
 }
 
-// Bot (Green) AI Player
+// Opponent (Green) AI Player with Expert Algorithm
 function playBotTurn() {
   if (!game || game.currentTurn !== 'green') return;
 
@@ -840,48 +1282,30 @@ function playBotTurn() {
 
     const validMoves = game.getValidMoves('green');
     if (validMoves.length === 0) {
+      clearTurnTimer();
       setTimeout(() => {
         renderLudoBoard();
         updateTurnState();
-      }, 200);
+      }, 300);
       return;
     }
 
-    // Bot Decision Engine: Prioritize captures, exiting yard on 6, or advancing closest to home
-    let chosenId = validMoves[0];
-    let highestScore = -1;
+    // Expert Decision Matrix from ludo-engine.js
+    const chosenId = getExpertBotMove(game, 'green');
 
-    validMoves.forEach(tid => {
-      const tok = game.tokens['green'].find(t => t.id === tid);
-      let score = 0;
-
-      if (tok.step === -1 && roll === 6) {
-        score = 80; // Highly desirable to get token on track
-      } else {
-        const nextStep = tok.step + roll;
-        // Check if lands on opponent token
-        const nextTrackIdx = game.getTrackIndex('green', nextStep);
-        if (!SAFE_SQUARES.includes(nextTrackIdx)) {
-          const capturesPlayer = game.tokens['blue'].some(pt => pt.step >= 0 && pt.step <= 50 && game.getTrackIndex('blue', pt.step) === nextTrackIdx);
-          if (capturesPlayer) score = 100;
-        }
-        score = Math.max(score, nextStep);
-      }
-
-      if (score > highestScore) {
-        highestScore = score;
-        chosenId = tid;
-      }
-    });
-
+    // Realistic human move execution delay: 500ms - 850ms
+    const moveDelay = Math.floor(Math.random() * 350) + 500;
     setTimeout(() => {
+      if (!game || game.currentTurn !== 'green') return;
+
+      clearTurnTimer();
       sound.playTokenMove();
       const res = game.moveToken(chosenId, 'green');
       renderLudoBoard();
 
       if (res.capture) {
         sound.playCapture();
-        showToast('Bot captured your pawn!', 'warning');
+        showToast(`${matchedOpponent.short} captured your goti!`, 'warning');
       }
 
       if (res.winner) {
@@ -890,12 +1314,15 @@ function playBotTurn() {
       }
 
       updateTurnState();
-    }, 120);
-  }, 180);
+    }, moveDelay);
+  }, 200);
 }
 
-// Game Over & Payout
-function handleGameOver(winnerColor) {
+// Game Over & Payout Handling
+function handleGameOver(winnerColor, reason = '') {
+  clearTurnTimer();
+  if (botTimer) clearTimeout(botTimer);
+
   if (winnerColor === 'blue') {
     sound.playWin();
     try {
@@ -904,16 +1331,29 @@ function handleGameOver(winnerColor) {
       }
     } catch (e) {}
 
-    winnerTitle.innerText = 'YOU WON!';
-    winnerTitle.className = 'text-2xl font-black text-amber-300 uppercase tracking-tight';
-    winnerSub.innerText = 'Congratulations! Prize money has been credited directly to your winning wallet.';
-    winnerPayout.innerText = `₹ ${game.prizePool.toFixed(2)}`;
-    creditMatchWinnings(game.prizePool);
+    if (reason === 'opp_eliminated') {
+      winnerTitle.innerText = 'YOU WON! (BY FORFEIT)';
+      winnerTitle.className = 'text-2xl font-black text-amber-300 uppercase tracking-tight';
+      winnerSub.innerText = `${matchedOpponent.name} timed out 4 times and was eliminated. Prize credited!`;
+    } else {
+      winnerTitle.innerText = 'YOU WON!';
+      winnerTitle.className = 'text-2xl font-black text-amber-300 uppercase tracking-tight';
+      winnerSub.innerText = 'Congratulations! Prize money has been credited directly to your winning wallet.';
+    }
+
+    winnerPayout.innerText = `₹ ${game ? game.prizePool.toFixed(2) : (selectedStake * 1.8).toFixed(2)}`;
+    if (game) creditMatchWinnings(game.prizePool);
   } else {
-    sound.playGameOver();
-    winnerTitle.innerText = 'BOT WON';
-    winnerTitle.className = 'text-2xl font-black text-rose-400 uppercase tracking-tight';
-    winnerSub.innerText = 'Good game! The Bot reached home first this round. Better luck next match!';
+    sound.playLose();
+    if (reason === 'player_eliminated') {
+      winnerTitle.innerText = 'YOU WERE ELIMINATED';
+      winnerTitle.className = 'text-2xl font-black text-rose-400 uppercase tracking-tight';
+      winnerSub.innerText = 'You missed 4 turns in a row and were forfeited. Better luck next match!';
+    } else {
+      winnerTitle.innerText = `${matchedOpponent.name.toUpperCase()} WON`;
+      winnerTitle.className = 'text-2xl font-black text-rose-400 uppercase tracking-tight';
+      winnerSub.innerText = `Good game! ${matchedOpponent.name} reached home first this round. Better luck next match!`;
+    }
     winnerPayout.innerText = '₹ 0.00';
   }
 
@@ -922,7 +1362,7 @@ function handleGameOver(winnerColor) {
 
 btnPlayAgain.onclick = () => {
   closeModal(modalWinner);
-  startLudoMatch();
+  startMatchmaking();
 };
 
 // ============================================================================
@@ -1404,10 +1844,10 @@ function handleUrlAutostart() {
   updatePrizePool();
 
   if (autostart === '1') {
-    // Hide header immediately and launch game
+    // Hide header immediately and launch matchmaking
     if (mainHeader) mainHeader.classList.add('hidden');
     setTimeout(() => {
-      startLudoMatch();
+      startMatchmaking();
     }, 200);
   }
 }

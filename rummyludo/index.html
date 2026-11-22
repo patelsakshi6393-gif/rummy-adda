@@ -232,23 +232,104 @@
       </button>
     </div>
 
-    <!-- B. LIVE GAMEPLAY SCREEN (MATCHING IMAGE 1 EXACTLY) -->
+    <!-- B. REALTIME MATCHMAKING SCREEN (15s Search -> Realistic Expert Opponent) -->
+    <div id="ludo-matchmaking-view" class="hidden flex-col items-center justify-center w-full max-w-md mx-auto py-6 px-4 space-y-6">
+      <!-- Status Badge -->
+      <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-black uppercase tracking-wider">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span>Online Cash Matchmaking</span>
+      </div>
+
+      <!-- Radar Animation -->
+      <div class="relative w-44 h-44 sm:w-48 sm:h-48 flex items-center justify-center">
+        <div class="absolute inset-0 rounded-full border border-sky-500/20 animate-ping"></div>
+        <div class="absolute inset-4 rounded-full border border-sky-400/30 animate-pulse"></div>
+        <div class="absolute inset-8 rounded-full border border-amber-400/40"></div>
+        <div class="absolute inset-0 rounded-full border-t-2 border-r-2 border-amber-400 animate-spin" style="animation-duration: 2s;"></div>
+        
+        <!-- Center VS Badge with glow -->
+        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center font-black text-2xl text-slate-950 shadow-2xl shadow-amber-500/50 z-10">
+          VS
+        </div>
+      </div>
+
+      <!-- Timer & Progress -->
+      <div class="text-center space-y-1.5 w-full max-w-xs">
+        <h3 id="matchmaking-headline" class="text-lg font-black text-white uppercase tracking-wide">Finding Opponent</h3>
+        <p id="matchmaking-subtext" class="text-xs text-slate-300 font-semibold">Matching with online player for ₹<span id="match-stake-val">1</span> table...</p>
+        
+        <div class="mt-2 flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-amber-400 font-mono-num font-bold text-xs">
+          <svg class="w-4 h-4 text-amber-400 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32" stroke-dashoffset="10"/></svg>
+          <span>Estimated wait: <span id="matchmaking-seconds" class="text-white font-black text-sm">15</span>s</span>
+        </div>
+      </div>
+
+      <!-- Versus Cards (You on Left, Opponent on Right) -->
+      <div class="grid grid-cols-2 gap-3 w-full">
+        <!-- Player Card -->
+        <div class="p-3 rounded-2xl bg-[#0f1730] border-2 border-blue-500/40 flex items-center gap-2.5 shadow-lg">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white font-black text-sm shrink-0 shadow">
+            <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+          </div>
+          <div class="min-w-0">
+            <div id="match-player-name" class="text-xs font-black text-white truncate">You</div>
+            <div class="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span>Ready</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Opponent Card -->
+        <div id="matchmaking-opp-card" class="p-3 rounded-2xl bg-[#0f1730] border-2 border-white/10 flex items-center gap-2.5 shadow-lg transition-all">
+          <div id="match-opp-avatar" class="w-10 h-10 rounded-xl bg-slate-800 border border-white/20 flex items-center justify-center text-amber-400 font-black text-sm shrink-0 animate-pulse">
+            ?
+          </div>
+          <div class="min-w-0">
+            <div id="match-opp-name" class="text-xs font-black text-slate-400 truncate">Searching...</div>
+            <div id="match-opp-status" class="text-[10px] text-amber-400 font-bold truncate">Connecting</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cancel Matchmaking Button -->
+      <button id="btn-cancel-matchmaking" class="text-xs text-slate-400 hover:text-white font-bold underline cursor-pointer">
+        Cancel Matchmaking
+      </button>
+    </div>
+
+    <!-- C. LIVE GAMEPLAY SCREEN (MATCHING IMAGE 1 EXACTLY) -->
     <div id="ludo-board-view" class="hidden flex-col items-center justify-between w-full h-full py-2">
 
-      <!-- TOP CONTROL ROW: Golden Back Button (Center) & Bot Card (Right) -->
+      <!-- TOP CONTROL ROW: Golden Back Button (Left), Opponent Card with Timer & Strikes (Right) -->
       <div class="w-full max-w-[min(98vw,calc(100dvh-130px))] flex items-center justify-between px-1 mb-2 z-20">
-        <!-- Spacer for left balance -->
-        <div class="w-12"></div>
-
-        <!-- Top Center: Golden Rounded Back Button (↩) -->
-        <button id="btn-top-back" class="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-b from-[#ffd54f] via-[#ffb300] to-[#f57c00] border-2 border-[#ffec99] shadow-[0_4px_14px_rgba(0,0,0,0.6)] flex items-center justify-center active:scale-95 transition-transform cursor-pointer" title="Exit Match">
-          <svg class="w-6 h-6 fill-slate-950" viewBox="0 0 24 24">
+        <!-- Top Left: Golden Rounded Back Button (↩) -->
+        <button id="btn-top-back" class="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-b from-[#ffd54f] via-[#ffb300] to-[#f57c00] border-2 border-[#ffec99] shadow-[0_4px_14px_rgba(0,0,0,0.6)] flex items-center justify-center active:scale-95 transition-transform cursor-pointer shrink-0" title="Exit Match">
+          <svg class="w-5 h-5 fill-slate-950" viewBox="0 0 24 24">
             <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/>
           </svg>
         </button>
 
-        <!-- Top Right: Opponent / Bot Card (Dice Face + Green Pin Icon) -->
-        <div id="bot-card" class="flex items-center gap-1.5 p-1 rounded-2xl bg-[#0d1c42]/90 border-2 border-[#facc15] shadow-lg">
+        <!-- Top Right: Opponent Card (Player Details + 15s Timer + 3 Chances + Dice) -->
+        <div id="bot-card" class="flex items-center gap-1.5 p-1 sm:p-1.5 rounded-2xl bg-[#0d1c42]/95 border-2 border-[#facc15] shadow-lg">
+          <!-- Opponent Profile Info & Strikes -->
+          <div class="flex flex-col items-end pr-1 min-w-[75px] sm:min-w-[90px]">
+            <div class="flex items-center gap-1">
+              <span id="opp-display-name" class="text-[11px] sm:text-xs font-black text-white truncate max-w-[80px] sm:max-w-[100px]">Opponent</span>
+              <!-- 15s Countdown Badge -->
+              <div id="opp-timer-box" class="hidden items-center px-1.5 py-0.2 rounded-full bg-emerald-400 text-slate-950 font-black text-[9px] font-mono-num">
+                <span id="opp-timer-sec">15s</span>
+              </div>
+            </div>
+            <!-- 3 Chance Dots (4th = OUT) -->
+            <div class="flex items-center gap-1 mt-0.5" title="Chances Remaining (4th timeout = Out)">
+              <span class="text-[8px] text-slate-400 font-bold uppercase mr-0.5">Lives</span>
+              <span id="opp-strike-1" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+              <span id="opp-strike-2" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+              <span id="opp-strike-3" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+            </div>
+          </div>
+
           <!-- Bot Dice Box -->
           <div id="bot-dice-cube" class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-[#ffffff] via-[#f1f5f9] to-[#cbd5e1] border-2 border-slate-300 shadow-md flex items-center justify-center p-0.5">
             <svg id="bot-dice-svg" class="w-full h-full" viewBox="0 0 56 56"></svg>
@@ -268,11 +349,11 @@
         <svg id="ludo-svg" viewBox="0 0 15 15" class="w-full h-full select-none block"></svg>
       </div>
 
-      <!-- BOTTOM CONTROL ROW: You Card (Left) & Animated Golden Arrow pointing to Dice -->
+      <!-- BOTTOM CONTROL ROW: You Card (Left) & Prize Pool Badge (Right) -->
       <div class="w-full max-w-[min(98vw,calc(100dvh-130px))] flex items-center justify-between px-1 mt-2 z-20">
         <!-- Bottom Left: You Card + Indicator Arrow -->
         <div class="flex items-center gap-2">
-          <div id="you-card" class="flex items-center gap-1.5 p-1 rounded-2xl bg-[#0d1c42]/90 border-2 border-[#facc15] shadow-lg">
+          <div id="you-card" class="flex items-center gap-1.5 p-1 sm:p-1.5 rounded-2xl bg-[#0d1c42]/95 border-2 border-[#facc15] shadow-lg">
             <!-- Blue Pin Marker Card -->
             <div class="w-8 h-10 sm:w-9 sm:h-11 rounded-xl bg-[#0284c7] border border-sky-300/40 flex items-center justify-center shadow-inner">
               <svg class="w-5 h-7" viewBox="0 0 24 30" fill="none">
@@ -284,6 +365,23 @@
             <button id="btn-roll-dice" class="dice-cube w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-[#ffffff] via-[#f1f5f9] to-[#cbd5e1] border-2 border-slate-300 shadow-md flex items-center justify-center active:scale-90 transition-transform cursor-pointer p-0.5" title="Tap to Roll">
               <svg id="dice-svg" class="w-full h-full" viewBox="0 0 56 56"></svg>
             </button>
+            <!-- You Details, 15s Timer & Strikes -->
+            <div class="flex flex-col items-start pl-1 min-w-[75px] sm:min-w-[90px]">
+              <div class="flex items-center gap-1">
+                <span id="you-display-name" class="text-[11px] sm:text-xs font-black text-white truncate max-w-[80px] sm:max-w-[100px]">You</span>
+                <!-- 15s Countdown Badge -->
+                <div id="you-timer-box" class="hidden items-center px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] font-mono-num animate-pulse">
+                  <span id="you-timer-sec">15s</span>
+                </div>
+              </div>
+              <!-- 3 Chance Dots (4th = OUT) -->
+              <div class="flex items-center gap-1 mt-0.5" title="Chances Remaining (4th timeout = Out)">
+                <span class="text-[8px] text-slate-400 font-bold uppercase mr-0.5">Lives</span>
+                <span id="you-strike-1" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+                <span id="you-strike-2" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+                <span id="you-strike-3" class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm transition-colors"></span>
+              </div>
+            </div>
           </div>
 
           <!-- Animated Golden/Orange Arrow pointing directly to Dice when it's your turn -->

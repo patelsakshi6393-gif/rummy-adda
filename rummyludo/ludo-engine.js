@@ -70,6 +70,15 @@ export class LudoGame {
     this.consecutiveSixes = 0;
     this.winner = null;
 
+    // Timeout / Chance System: 3 missed chances allowed, 4th timeout = Automatic OUT
+    this.strikes = {
+      blue: 0,
+      green: 0,
+      red: 0,
+      yellow: 0
+    };
+    this.MAX_STRIKES = 3;
+
     // Tokens state for each color: 4 tokens
     // step: -1 = yard, 0..50 = track, 51..55 = home straight, 56 = Home (Finished)
     this.tokens = {
@@ -237,4 +246,139 @@ export class LudoGame {
     this.currentTurnIndex = (this.currentTurnIndex + 1) % this.turnOrder.length;
     this.currentTurn = this.turnOrder[this.currentTurnIndex];
   }
+
+  recordTimeout(color = this.currentTurn) {
+    this.strikes[color] = (this.strikes[color] || 0) + 1;
+    if (this.strikes[color] >= 4) {
+      // 4th time out: Automatic Out / Forfeit
+      const otherColors = this.turnOrder.filter(c => c !== color);
+      this.winner = otherColors[0] || 'green';
+      return { eliminated: true, strikes: this.strikes[color], winner: this.winner };
+    }
+    this.nextTurn();
+    return { eliminated: false, strikes: this.strikes[color], winner: null };
+  }
+}
+
+/**
+ * Expert Ludo AI Engine
+ * Tactical decision matrix:
+ * 1. Reach Home (10,000 pts)
+ * 2. Kill Opponent Token (6,000 + target distance pts)
+ * 3. Enter Safe Home Straight (4,000 pts)
+ * 4. Escape Immediate Danger if threatened within 1-6 squares (3,000 pts)
+ * 5. Unlock Yard Token on 6 (2,500 pts)
+ * 6. Land on Safe Star Square (2,000 pts)
+ * 7. Avoid Stepping into Enemy Range (-1,500 pts)
+ * 8. Progressive Forward Advance
+ */
+export function getExpertBotMove(game, botColor = 'green') {
+  const validMoves = game.getValidMoves(botColor);
+  if (!validMoves || validMoves.length === 0) return null;
+  if (validMoves.length === 1) return validMoves[0];
+
+  const roll = game.diceValue;
+  let bestMove = validMoves[0];
+  let bestScore = -Infinity;
+
+  validMoves.forEach(tokenId => {
+    const tok = game.tokens[botColor].find(t => t.id === tokenId);
+    let score = 0;
+
+    // 1. Can reach home?
+    if (tok.step + roll === 56) {
+      score += 10000;
+    }
+
+    // 2. Can capture an opponent token?
+    if (tok.step >= 0 && tok.step <= 50) {
+      const nextStep = tok.step + roll;
+      if (nextStep <= 50) {
+        const nextTrackIdx = game.getTrackIndex(botColor, nextStep);
+        if (!SAFE_SQUARES.includes(nextTrackIdx)) {
+          for (const oppColor of game.turnOrder) {
+            if (oppColor === botColor) continue;
+            for (const oppTok of game.tokens[oppColor]) {
+              if (oppTok.step >= 0 && oppTok.step <= 50) {
+                const oppTrackIdx = game.getTrackIndex(oppColor, oppTok.step);
+                if (oppTrackIdx === nextTrackIdx) {
+                  // Capture! Favor cutting opponent tokens that have progressed further
+                  score += 6000 + oppTok.step * 40;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Exiting yard on 6
+    if (tok.step === -1 && roll === 6) {
+      const activeCount = game.tokens[botColor].filter(t => t.step >= 0 && t.step < 56).length;
+      score += (activeCount < 2) ? 3500 : 2200;
+    }
+
+    // 4. Entering safe home straight (51..55)
+    if (tok.step >= 0 && tok.step <= 50 && tok.step + roll >= 51) {
+      score += 4000;
+    }
+
+    // 5. Landing on a safe star square
+    if (tok.step >= 0 && tok.step + roll <= 50) {
+      const nextTrackIdx = game.getTrackIndex(botColor, tok.step + roll);
+      if (SAFE_SQUARES.includes(nextTrackIdx)) {
+        score += 2500;
+      }
+    }
+
+    // 6. Escaping from immediate danger
+    if (tok.step >= 0 && tok.step <= 50) {
+      const currentTrackIdx = game.getTrackIndex(botColor, tok.step);
+      if (!SAFE_SQUARES.includes(currentTrackIdx)) {
+        for (const oppColor of game.turnOrder) {
+          if (oppColor === botColor) continue;
+          for (const oppTok of game.tokens[oppColor]) {
+            if (oppTok.step >= 0 && oppTok.step <= 50) {
+              const oppTrackIdx = game.getTrackIndex(oppColor, oppTok.step);
+              const distBehind = (currentTrackIdx - oppTrackIdx + 52) % 52;
+              if (distBehind >= 1 && distBehind <= 6) {
+                score += 3000;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 7. Danger avoidance: Does moving place this token 1-6 squares ahead of an enemy?
+    if (tok.step >= 0 && tok.step + roll <= 50) {
+      const nextTrackIdx = game.getTrackIndex(botColor, tok.step + roll);
+      if (!SAFE_SQUARES.includes(nextTrackIdx)) {
+        for (const oppColor of game.turnOrder) {
+          if (oppColor === botColor) continue;
+          for (const oppTok of game.tokens[oppColor]) {
+            if (oppTok.step >= 0 && oppTok.step <= 50) {
+              const oppTrackIdx = game.getTrackIndex(oppColor, oppTok.step);
+              const distBehind = (nextTrackIdx - oppTrackIdx + 52) % 52;
+              if (distBehind >= 1 && distBehind <= 6) {
+                score -= 1600;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 8. General forward movement
+    if (tok.step >= 0) {
+      score += (tok.step + roll) * 15;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = tokenId;
+    }
+  });
+
+  return bestMove;
 }
