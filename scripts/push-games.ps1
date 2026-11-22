@@ -41,7 +41,7 @@ function Push-GameRepo {
         Write-Host ">>> Successfully pushed $GameName!" -ForegroundColor Green
     }
     catch {
-        Write-Error "Failed to push $GameName: $_"
+        Write-Error "Failed to push ${GameName} - $_"
     }
     finally {
         Pop-Location
